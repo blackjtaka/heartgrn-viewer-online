@@ -83,6 +83,36 @@ NCBI_ESUMMARY = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 NCBI_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 EUROPE_PMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 
+# ---- In-process rate limiter ------------------------------------------------
+# Bucket per (client_ip, endpoint) → list of recent request timestamps.
+# Cleared lazily on each check.
+import threading as _rl_threading
+_RATE_WINDOW_SEC = 60
+_RATE_LIMITS = {
+    "/chat": int(os.environ.get("CHAT_RATE_PER_MIN", "20")),
+    # Add more endpoints here if needed; absent endpoints are unlimited.
+}
+_rl_buckets: dict[tuple[str, str], list[float]] = {}
+_rl_lock = _rl_threading.Lock()
+
+
+def rate_limit_check(client_ip: str, endpoint: str) -> tuple[bool, int]:
+    """Return (allowed, retry_after_sec). retry_after_sec is 0 when allowed."""
+    cap = _RATE_LIMITS.get(endpoint)
+    if cap is None:
+        return True, 0
+    now = time.time()
+    cutoff = now - _RATE_WINDOW_SEC
+    key = (client_ip, endpoint)
+    with _rl_lock:
+        bucket = [t for t in _rl_buckets.get(key, []) if t > cutoff]
+        if len(bucket) >= cap:
+            oldest = bucket[0]
+            return False, max(1, int(_RATE_WINDOW_SEC - (now - oldest)))
+        bucket.append(now)
+        _rl_buckets[key] = bucket
+    return True, 0
+
 # Disease label → preferred PubMed query expansion
 DISEASE_TERMS = {
     "AF": "(atrial fibrillation[MeSH Terms] OR atrial fibrillation OR atrial flutter)",
@@ -1287,6 +1317,25 @@ class LitHandler(BaseHTTPRequestHandler):
 
         # /chat: interactive Ask Agent (BYOK — user supplies X-API-Key header)
         if path == "/chat":
+            # Per-IP rate limit. Cloudflare forwards the real client IP via CF-Connecting-IP;
+            # respect X-Forwarded-For as a fallback, otherwise use the socket peer.
+            client_ip = (self.headers.get("CF-Connecting-IP")
+                         or (self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or None)
+                         or self.client_address[0])
+            allowed, retry_after = rate_limit_check(client_ip, "/chat")
+            if not allowed:
+                self.send_response(429)
+                self.send_header("Retry-After", str(retry_after))
+                self.send_header("Content-Type", "application/json")
+                self._set_cors()
+                body = json.dumps({"error": "rate_limited",
+                                   "message": f"Too many requests; retry after {retry_after}s",
+                                   "retry_after": retry_after}).encode()
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             user_key = self.headers.get("X-API-Key", "").strip()
             if not user_key:
                 self._json(401, {"error": "byok_required",

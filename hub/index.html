@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HeartGRN Viewer — interactive cardiac GWAS-eGRN explorer</title>
+<meta name="robots" content="noindex,nofollow">
+<!-- Runtime configuration. Edit assets/config.js to change API_BASE and access password. -->
+<script src="assets/config.js"></script>
+<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/@popperjs/core@2"></script>
+<script src="https://unpkg.com/cytoscape-popper@2.0.0/cytoscape-popper.js"></script>
+<script src="https://unpkg.com/tippy.js@6/dist/tippy-bundle.umd.js"></script>
+<script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
+<link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
+<link rel="stylesheet" href="assets/styles.css?v=1778613103">
+<style>
+  /* Password gate + BYOK modal styling */
+  .gate-overlay {
+    position: fixed; inset: 0; background: rgba(245,245,250,0.97);
+    z-index: 9999; display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  .gate-card {
+    background: #fff; border: 1px solid #ddd; border-radius: 10px;
+    padding: 28px 32px; max-width: 480px; width: 90%;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.10);
+  }
+  .gate-card h2 { margin: 0 0 6px; font-size: 18px; color: #2a3a5e; }
+  .gate-card p  { margin: 8px 0; font-size: 13px; line-height: 1.55; color: #555; }
+  .gate-card input[type="password"], .gate-card input[type="text"] {
+    width: 100%; padding: 9px 11px; font: 13px ui-monospace, monospace;
+    border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box;
+  }
+  .gate-card .row { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  .gate-card button {
+    padding: 8px 16px; border: 0; border-radius: 6px; background: #2a6fbf;
+    color: #fff; font-weight: 600; cursor: pointer;
+  }
+  .gate-card button.secondary { background: #888; }
+  .gate-card .err { color: #c0392b; font-size: 12px; margin-top: 6px; min-height: 1.1em; }
+  .gate-card .hint { color: #888; font-size: 11px; margin-top: 6px; }
+  .gate-card a { color: #2a6fbf; }
+  #app { visibility: hidden; }
+  body.gate-cleared #app { visibility: visible; }
+  body.gate-cleared .gate-overlay { display: none; }
+
+  /* Activate-Agent floating button shown in viewer */
+  #activate-agent-btn {
+    position: fixed; top: 12px; right: 12px; z-index: 1500;
+    padding: 7px 13px; font: 12px -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #eaf3ff; color: #2a6fbf; border: 1px solid #b8d5f5;
+    border-radius: 6px; cursor: pointer;
+  }
+  #activate-agent-btn.ok { background: #e7f7ec; color: #1a7a3a; border-color: #b8e2c3; }
+</style>
+</head>
+<body>
+
+<!-- ===== Password gate (staging) ===== -->
+<div id="pass-gate" class="gate-overlay" style="display:none">
+  <div class="gate-card">
+    <h2>HeartGRN Viewer — staging</h2>
+    <p>This is a staging preview of the viewer that accompanies the snp2cell cardiac GWAS-eGRN analysis. It is not yet public.</p>
+    <p>If you have an access password, enter it below.</p>
+    <div class="row">
+      <input id="pass-input" type="password" autocomplete="off" placeholder="Access password">
+      <button id="pass-submit">Enter</button>
+    </div>
+    <div id="pass-err" class="err"></div>
+    <div class="hint">Forgot the password? Contact tj372@cam.ac.uk.</div>
+  </div>
+</div>
+
+<!-- ===== BYOK Anthropic key modal ===== -->
+<div id="byok-modal" class="gate-overlay" style="display:none">
+  <div class="gate-card">
+    <h2>Activate Agent chat</h2>
+    <p>The interactive chat panel uses <b>your own Anthropic API key</b>. The key is stored in this browser's localStorage only — never sent to or stored on our servers. The backend proxies it to Anthropic for one request and discards it.</p>
+    <p>Graph exploration (nodes, edges, paths, panels) does not require a key.</p>
+    <div class="row">
+      <input id="byok-input" type="password" autocomplete="off" placeholder="sk-ant-...">
+      <button id="byok-save">Activate</button>
+      <button id="byok-cancel" class="secondary">Cancel</button>
+    </div>
+    <div id="byok-err" class="err"></div>
+    <div class="hint">
+      No key? Sign up at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> — new users get $5 free credit ≈ 1,000 graph queries.<br>
+      Or, after activating, click the badge in the top-right to clear or replace your key.
+    </div>
+  </div>
+</div>
+
+<button id="activate-agent-btn" style="display:none" onclick="window.openByokModal()">🔑 Activate Agent</button>
+
+<script>
+// ===== Gate logic — runs before viewer.js loads the graph =====
+(function () {
+  async function sha256(text) {
+    const buf = new TextEncoder().encode(text);
+    const hash = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  const REQUIRED_HASH = (window.HUB_CONFIG && window.HUB_CONFIG.PASSWORD_SHA256) || "";
+  const requirePass = (window.HUB_CONFIG && window.HUB_CONFIG.REQUIRE_PASSWORD) !== false;
+  const passOk = localStorage.getItem("hg_gate_v1") === REQUIRED_HASH && REQUIRED_HASH;
+
+  function showGate() {
+    document.getElementById("pass-gate").style.display = "flex";
+    document.getElementById("pass-input").focus();
+  }
+  function clearGate() {
+    document.body.classList.add("gate-cleared");
+    refreshActivateButton();
+  }
+  async function trySubmit() {
+    const v = (document.getElementById("pass-input").value || "").trim();
+    const err = document.getElementById("pass-err");
+    if (!v) { err.textContent = "Enter the access password."; return; }
+    const h = await sha256(v);
+    if (h === REQUIRED_HASH) {
+      localStorage.setItem("hg_gate_v1", h);
+      err.textContent = "";
+      clearGate();
+    } else {
+      err.textContent = "Incorrect password.";
+    }
+  }
+
+  if (!requirePass || !REQUIRED_HASH) {
+    clearGate();
+  } else if (passOk) {
+    clearGate();
+  } else {
+    showGate();
+    document.getElementById("pass-submit").addEventListener("click", trySubmit);
+    document.getElementById("pass-input").addEventListener("keydown", e => { if (e.key === "Enter") trySubmit(); });
+  }
+
+  // ===== BYOK modal =====
+  function refreshActivateButton() {
+    const btn = document.getElementById("activate-agent-btn");
+    if (!btn) return;
+    btn.style.display = "";
+    const k = localStorage.getItem("anthropic_api_key") || "";
+    if (k && k.startsWith("sk-ant-")) {
+      btn.classList.add("ok");
+      btn.textContent = "🔑 Key set · settings";
+    } else {
+      btn.classList.remove("ok");
+      btn.textContent = "🔑 Activate Agent";
+    }
+  }
+  window.openByokModal = function () {
+    document.getElementById("byok-modal").style.display = "flex";
+    const k = localStorage.getItem("anthropic_api_key") || "";
+    document.getElementById("byok-input").value = k;
+    document.getElementById("byok-err").textContent = "";
+    document.getElementById("byok-input").focus();
+  };
+  function closeByokModal() {
+    document.getElementById("byok-modal").style.display = "none";
+  }
+  function saveByokKey() {
+    const v = (document.getElementById("byok-input").value || "").trim();
+    const err = document.getElementById("byok-err");
+    if (!v) {
+      localStorage.removeItem("anthropic_api_key");
+      err.textContent = "";
+      closeByokModal();
+      refreshActivateButton();
+      return;
+    }
+    if (!v.startsWith("sk-ant-")) {
+      err.textContent = "Anthropic keys start with 'sk-ant-'. Paste the full key.";
+      return;
+    }
+    localStorage.setItem("anthropic_api_key", v);
+    err.textContent = "";
+    closeByokModal();
+    refreshActivateButton();
+  }
+  document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("byok-save").addEventListener("click", saveByokKey);
+    document.getElementById("byok-cancel").addEventListener("click", closeByokModal);
+    document.getElementById("byok-input").addEventListener("keydown", e => { if (e.key === "Enter") saveByokKey(); });
+    refreshActivateButton();
+  });
+})();
+</script>
+
+<div id="app">
+<div id="app">
+  <div id="cy"></div>
+  <div id="side">
+    <h1 id="title-label">snp2cell hub</h1>
+    <div class="meta" id="meta-line">Loading manifest…</div>
+
+    <h2>Selection</h2>
+    <div class="control">
+      <label>Preset</label>
+      <select id="preset-select"><option value="">— none —</option></select>
+    </div>
+    <div class="control">
+      <label>Disease</label>
+      <select id="disease-select"></select>
+    </div>
+    <div class="control">
+      <label>Target cell_state</label>
+      <input id="target-cs-search" type="text" placeholder="filter…" style="margin-bottom:4px">
+      <select id="target-cs-select"></select>
+      <div id="target-cs-meta" class="meta" style="margin-top:2px"></div>
+    </div>
+    <div class="control">
+      <label>Score key</label>
+      <select id="score-key-select"></select>
+    </div>
+
+    <h2>Subgraph parameters</h2>
+    <div class="control">
+      <label>Top-N seed genes (max 200)</label>
+      <input id="topn-slider" type="range" min="10" max="200" step="5" value="50">
+      <span id="topn-label" class="meta">50</span>
+    </div>
+    <div class="control">
+      <label>Peaks per seed (max 10)</label>
+      <input id="peaks-slider" type="range" min="1" max="10" step="1" value="6">
+      <span id="peaks-label" class="meta">6</span>
+    </div>
+    <div class="control">
+      <label>TFs per peak (max 10)</label>
+      <input id="tfs-slider" type="range" min="0" max="10" step="1" value="4">
+      <span id="tfs-label" class="meta">4</span>
+    </div>
+
+    <h2>Specificity contrast</h2>
+    <div class="control">
+      <label>Compare target_cs vs</label>
+      <select id="ref-mode">
+        <option value="all">All other cell_states (default, n=59)</option>
+        <option value="selected">Selected cell_states ▼</option>
+      </select>
+    </div>
+    <div id="ref-picker" style="display:none">
+      <input id="ref-search" type="text" placeholder="filter cell_states…" class="ref-search">
+      <div id="ref-checklist" class="ref-checklist"></div>
+      <div class="meta">Min 2 cell_states required. Current: <span id="ref-count">0</span></div>
+    </div>
+    <div class="control">
+      <label>FDR threshold</label>
+      <input id="fdr-input" type="number" min="0.001" max="0.5" step="0.01" value="0.10">
+    </div>
+
+    <h2>Edge highlight</h2>
+    <div class="control">
+      <label>Mode</label>
+      <select id="edge-mode">
+        <option value="highlight">Highlight only (keep full network)</option>
+        <option value="subset">Subset to selected (drop other edges)</option>
+        <option value="off">Off</option>
+      </select>
+    </div>
+    <div class="control">
+      <label>Cell-type(s) to highlight</label>
+      <select id="edge-ct-select" multiple size="4"></select>
+    </div>
+    <div class="control">
+      <label title="When on, top-N peak/TF selection per seed prioritizes edges whose cell_types match the highlight set. Off = pure GWAS-z order (same as static figure).">
+        <input type="checkbox" id="celltype-priority-toggle" checked>
+        Prioritize cell-type-matching edges in top-N
+      </label>
+    </div>
+
+    <h2>Display</h2>
+    <div class="control">
+      <label><input type="checkbox" id="gene-label-toggle" checked> Show gene labels</label>
+      <label><input type="checkbox" id="peak-label-toggle"> Show peak region labels</label>
+      <label><input type="checkbox" id="snp-emph-toggle" checked> Emphasize SNP peaks (blue border)</label>
+      <label><input type="checkbox" id="snp-halo-toggle"> Show large SNP halo</label>
+    </div>
+    <div class="control">
+      <label>TF labels</label>
+      <select id="tf-label-mode">
+        <option value="top_specific">Top-degree N ∪ specific (default)</option>
+        <option value="all">All TFs</option>
+        <option value="specific">Specific TFs only</option>
+        <option value="top">Top-degree N only</option>
+        <option value="none">None</option>
+      </select>
+    </div>
+    <div class="control">
+      <label>Top-N TF labels</label>
+      <input id="tf-top-n" type="number" min="0" max="200" value="10">
+    </div>
+
+    <div class="toolbar">
+      <button id="reset-btn">Reset view</button>
+      <button id="rebuild-btn" title="Force rebuild (also runs on parameter change)">Rebuild</button>
+      <button id="export-png-btn">Export PNG</button>
+      <button id="chat-toggle-btn" title="Open Ask Agent chat panel">💬 Ask Agent</button>
+    </div>
+
+    <h2>Color scale (GWAS-z, log10 scaled)</h2>
+    <div class="control">
+      <div id="color-bar" class="color-bar"></div>
+      <div class="color-bar-labels">
+        <span id="color-min-lbl">0</span>
+        <span id="color-mid-lbl"></span>
+        <span id="color-max-lbl"></span>
+      </div>
+    </div>
+    <div class="control">
+      <label>Override min / max (blank = auto)</label>
+      <div style="display:flex;gap:6px">
+        <input id="color-min-input" type="number" step="0.1" placeholder="auto" style="width:48%;">
+        <input id="color-max-input" type="number" step="0.1" placeholder="auto" style="width:48%;">
+      </div>
+    </div>
+    <button id="color-reset-btn" style="margin-top:2px">Reset to data range</button>
+
+    <h2>Stats</h2>
+    <div id="stats" class="meta"></div>
+
+    <h2>Legend</h2>
+    <div class="legend-block">
+      <div class="legend-row"><span class="swatch" style="background:#fff;border:3.5px solid #0f172a;border-radius:50%;width:14px;height:14px"></span> <b>both</b> (vs ALL ∩ vs ref) — black, larger</div>
+      <div class="legend-row"><span class="swatch" style="background:#fff;border:3px solid #0ea5e9;border-radius:50%;width:11px;height:11px"></span> all_only (broad-specific) — sky border</div>
+      <div class="legend-row"><span class="swatch" style="background:#fff;border:3px solid #047857;border-radius:50%;width:11px;height:11px"></span> ref_only (ref-specific) — emerald border</div>
+      <div class="legend-row"><span class="swatch" style="background:#9e9e9e"></span> neither</div>
+      <div class="legend-row"><span class="swatch" style="background:#d6604d"></span> highlight edge</div>
+      <div class="legend-row"><span class="swatch snp-overlap"></span> peak with SNP overlap</div>
+      <div class="legend-row"><span class="swatch" style="background:#fff;border:3px solid #FF9800"></span> hovered</div>
+      <div class="legend-row"><span class="swatch" style="background:#fff;border:4px solid #1565c0"></span> pinned (click to keep)</div>
+      <div class="legend-row"><span class="swatch" style="background:#ffd54f"></span> visited (trail)</div>
+      <div class="legend-row"><span class="swatch" style="background:#ff6f00;height:3px;border-radius:0"></span> path edge</div>
+    </div>
+
+    <h2>How to use</h2>
+    <div class="meta">
+      Pick disease + target cell_state. Default specificity contrast is "vs all
+      other cell_states". Switch to <i>Selected cell_states</i> to pick a
+      custom reference subset. <b>Click</b> a node to pin annotation (draggable
+      panel) and add it to the trail (yellow). <b>Hover</b> brings the closest
+      node to the front; press <b>Tab</b> to cycle stacked nodes. <b>Re-click</b>
+      removes the node's exclusive contribution. <b>Empty-space click</b> clears.
+    </div>
+  </div>
+</div>
+
+<div id="chat-panel" class="chat-panel">
+  <div class="chat-header">
+    <span>💬 Ask Agent</span>
+    <span class="chat-actions">
+      <button id="chat-clear" title="Clear history">⟲</button>
+      <span class="chat-close" id="chat-close-btn" title="Hide">−</span>
+    </span>
+  </div>
+  <div class="chat-body" id="chat-messages">
+    <div class="chat-msg agent">Hi — ask anything about the current network.
+    I can highlight nodes/paths, change top-N, trigger PubMed searches, etc.
+    Examples:<br>
+    • <i>"Show the effects of TBX5 in sleeve cells"</i><br>
+    • <i>"Highlight the path from rs2200733 to PITX2"</i><br>
+    • <i>"What's the role of PALMD?"</i><br>
+    • <i>"Restrict to CardiacConductionSystem edges, top 30 seeds"</i></div>
+  </div>
+  <div class="chat-input-row">
+    <textarea id="chat-input" rows="2" placeholder="Ask…  (Cmd/Ctrl+Enter = send)"></textarea>
+    <button id="chat-send">Send</button>
+  </div>
+  <div class="chat-meta" id="chat-meta"></div>
+</div>
+
+<script src="assets/specificity.js?v=1778613103"></script>
+<script src="assets/viewer.js?v=1778613103"></script>
+</body>
+</html>
