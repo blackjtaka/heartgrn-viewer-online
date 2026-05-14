@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Fly.io
+.fly/
+
+# Local cache
+hub/literature/
+hub/ag1_cache/
+hub/de_z/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+slurm-*.out
+slurm-*.err
+
+# Secrets (NEVER commit any of these)
+.env
+.env.local
+secrets.json
+*.key
+*.pem
+fly.secrets
