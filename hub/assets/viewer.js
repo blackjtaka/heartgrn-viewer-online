@@ -2303,15 +2303,21 @@
       context.subtract(primary).forEach((el) => el.removeClass("chat-highlight"));
 
       if (primary.nonempty()) {
-        const fitSet = primary.union(context).nodes();
-        const padding = primary.length === 1 ? 280 : 140;
-        const targetZoom = Math.min(S.cy.zoom() * 2.5, 2.5);
+        // Zoom from (primary + 1-hop) bbox; PAN to put primary at screen center.
+        const fitNodes = primary.union(context).nodes();
+        const padding = primary.length === 1 ? 200 : 120;
+        const w = S.cy.width(), h = S.cy.height();
+        const bb = fitNodes.boundingBox({ includeLabels: false });
+        const fitZoomW = bb.w > 0 ? (w - 2 * padding) / bb.w : S.cy.zoom();
+        const fitZoomH = bb.h > 0 ? (h - 2 * padding) / bb.h : S.cy.zoom();
+        const targetZoom = Math.max(0.3, Math.min(fitZoomW, fitZoomH, 2.5));
+        const pbb = primary.boundingBox({ includeLabels: false });
+        const px = (pbb.x1 + pbb.x2) / 2;
+        const py = (pbb.y1 + pbb.y2) / 2;
         S.cy.animate({
-          fit: { eles: fitSet, padding: padding },
-        }, {
-          duration: 700, easing: "ease-in-out",
-          complete: () => { if (S.cy.zoom() > targetZoom) S.cy.zoom(targetZoom); },
-        });
+          zoom: targetZoom,
+          pan: { x: w / 2 - px * targetZoom, y: h / 2 - py * targetZoom },
+        }, { duration: 700, easing: "ease-in-out" });
       } else if (ids.length) {
         console.warn("[chat] highlight_nodes: no matching nodes in current subgraph for", ids);
       }
