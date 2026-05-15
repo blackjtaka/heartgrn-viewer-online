@@ -1198,6 +1198,26 @@ class LitHandler(BaseHTTPRequestHandler):
             self._json(200, {"status": "ok", "hub_dir": str(self.hub_dir),
                              "backend": "pubmed-direct/2.0"})
             return
+        if path == "/" or path == "":
+            # Friendly landing page so a stray browser visitor sees something
+            # useful instead of bare 404. Backend has no UI of its own.
+            self._json(200, {
+                "service": "HeartGRN Viewer — backend API",
+                "status": "ok",
+                "info": "This is the API endpoint. The interactive viewer lives elsewhere.",
+                "endpoints": {
+                    "GET /healthz": "liveness check",
+                    "GET /literature/{type}/{key}": "cached PubMed/Europe PMC results (type ∈ snp|tf|gene)",
+                    "POST /literature/{type}/{key}": "run PubMed lookup; mode=agent/hybrid + synthesize=true require X-API-Key (sk-ant-...)",
+                    "POST /chat": "interactive agent (requires X-API-Key BYOK Anthropic key)",
+                    "GET /ag1/status/{variant}": "AlphaGenome score job status",
+                    "POST /ag1/score/{variant}": "kick off AG1 score subprocess",
+                    "POST /ag1/render/{variant}": "render AG1 figure",
+                },
+                "frontend": "https://heartgrn-viewer-online.pages.dev (Cloudflare Pages, password-gated staging)",
+                "repo": "https://github.com/blackjtaka/heartgrn-viewer-online",
+            })
+            return
         m = re.fullmatch(r"/ag1/status/(.+)", path)
         if m:
             variant_id = m.group(1)
