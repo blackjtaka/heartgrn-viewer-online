@@ -889,6 +889,15 @@
       { selector: "edge.chat-highlight", style: {
           "line-color": "#ec4899", "width": 1.8, "opacity": 0.92, "z-index": 35,
         } },
+      // Context-highlight = 1-hop neighborhood of a chat-highlighted node.
+      { selector: "node.chat-context", style: {
+          "border-color": "#f59e0b", "border-width": 1.1, "border-opacity": 0.85,
+          "underlay-color": "#fde68a", "underlay-opacity": 0.4, "underlay-padding": 4,
+          "opacity": 1, "text-opacity": 1, "z-index": 32,
+        } },
+      { selector: "edge.chat-context", style: {
+          "line-color": "#f59e0b", "width": 1.4, "opacity": 0.85, "z-index": 32,
+        } },
     ];
   }
 
@@ -2266,23 +2275,33 @@
       if (!S.cy) return [];
       const ids = (args && args.ids) || [];
       const ok = [];
-      let okNodes = S.cy.collection();
+      let primary = S.cy.collection();
+      let context = S.cy.collection();
       S.cy.batch(() => {
         ids.forEach((id) => {
           const n = S.cy.getElementById(id);
           if (n.length) {
             n.addClass("chat-highlight");
-            okNodes = okNodes.union(n);
+            primary = primary.union(n);
             ok.push(id);
+            const neigh = n.neighborhood();
+            neigh.addClass("chat-context");
+            context = context.union(neigh);
           }
         });
       });
-      // Auto fit + center on the highlighted node(s) so the user actually sees them.
-      if (okNodes.nonempty()) {
-        const padding = okNodes.length === 1 ? 200 : 80;
+      context.subtract(primary).forEach((el) => el.removeClass("chat-highlight"));
+
+      if (primary.nonempty()) {
+        const fitSet = primary.union(context).nodes();
+        const padding = primary.length === 1 ? 280 : 140;
+        const targetZoom = Math.min(S.cy.zoom() * 2.5, 2.5);
         S.cy.animate({
-          fit: { eles: okNodes, padding: padding },
-        }, { duration: 600, easing: "ease-in-out" });
+          fit: { eles: fitSet, padding: padding },
+        }, {
+          duration: 700, easing: "ease-in-out",
+          complete: () => { if (S.cy.zoom() > targetZoom) S.cy.zoom(targetZoom); },
+        });
       } else if (ids.length) {
         console.warn("[chat] highlight_nodes: no matching nodes in current subgraph for", ids);
       }
@@ -2296,9 +2315,11 @@
       const r = S.cy.elements().aStar({ root: from, goal: to, directed: false });
       if (!r.found) return [];
       r.path.addClass("chat-highlight");
-      // Zoom to the whole path so source / intermediate / target are all in view.
+      const ctx = r.path.nodes().neighborhood();
+      ctx.subtract(r.path).addClass("chat-context");
+      const fitSet = r.path.union(ctx).nodes();
       S.cy.animate({
-        fit: { eles: r.path, padding: 80 },
+        fit: { eles: fitSet, padding: 140 },
       }, { duration: 700, easing: "ease-in-out" });
       return r.path.nodes().map((n) => n.id());
     },
@@ -2407,7 +2428,7 @@
     },
     reset_highlights: () => {
       if (!S.cy) return [];
-      S.cy.elements().removeClass("chat-highlight faded");
+      S.cy.elements().removeClass("chat-highlight chat-context faded");
       return ["all"];
     },
   };
