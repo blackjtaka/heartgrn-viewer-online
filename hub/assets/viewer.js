@@ -2263,7 +2263,11 @@
                         { grounding_count: data.grounding_count,
                           grounding_terms: data.grounding_terms });
       S.chatHistory.push({ role: "agent", content: msg, actions: allActions });
+      // `message` = original user prompt; tell the dispatcher what the user
+      // is interested in so highlight_nodes anchors the camera there.
+      S.lastUserFocusIds = extractMentionedNodeIds(message);
       await applyChatActions(remainingActions);
+      S.lastUserFocusIds = null;
       if (data._raw) {
         const raw = document.createElement("div");
         raw.className = "raw";
@@ -2303,17 +2307,29 @@
       context.subtract(primary).forEach((el) => el.removeClass("chat-highlight"));
 
       if (primary.nonempty()) {
-        // Zoom from (primary + 1-hop) bbox; PAN to put primary at screen center.
+        // Anchor the camera on what the user asked about (S.lastUserFocusIds).
+        // The agent may also mention SCN5A/TBX5 etc.; they stay highlighted as
+        // primary, but the camera stays on the user's actual subject.
+        const userFocus = (S.lastUserFocusIds || []).filter((id) => ok.includes(id));
+        let anchor = primary;
+        if (userFocus.length) {
+          let af = S.cy.collection();
+          userFocus.forEach((id) => {
+            const n = S.cy.getElementById(id);
+            if (n.length) af = af.union(n);
+          });
+          if (af.nonempty()) anchor = af;
+        }
         const fitNodes = primary.union(context).nodes();
-        const padding = primary.length === 1 ? 200 : 120;
+        const padding = anchor.length === 1 ? 200 : 120;
         const w = S.cy.width(), h = S.cy.height();
         const bb = fitNodes.boundingBox({ includeLabels: false });
         const fitZoomW = bb.w > 0 ? (w - 2 * padding) / bb.w : S.cy.zoom();
         const fitZoomH = bb.h > 0 ? (h - 2 * padding) / bb.h : S.cy.zoom();
         const targetZoom = Math.max(0.3, Math.min(fitZoomW, fitZoomH, 2.5));
-        const pbb = primary.boundingBox({ includeLabels: false });
-        const px = (pbb.x1 + pbb.x2) / 2;
-        const py = (pbb.y1 + pbb.y2) / 2;
+        const abb = anchor.boundingBox({ includeLabels: false });
+        const px = (abb.x1 + abb.x2) / 2;
+        const py = (abb.y1 + abb.y2) / 2;
         S.cy.animate({
           zoom: targetZoom,
           pan: { x: w / 2 - px * targetZoom, y: h / 2 - py * targetZoom },
