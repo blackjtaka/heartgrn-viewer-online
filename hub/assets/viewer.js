@@ -2266,12 +2266,26 @@
       if (!S.cy) return [];
       const ids = (args && args.ids) || [];
       const ok = [];
+      let okNodes = S.cy.collection();
       S.cy.batch(() => {
         ids.forEach((id) => {
           const n = S.cy.getElementById(id);
-          if (n.length) { n.addClass("chat-highlight"); ok.push(id); }
+          if (n.length) {
+            n.addClass("chat-highlight");
+            okNodes = okNodes.union(n);
+            ok.push(id);
+          }
         });
       });
+      // Auto fit + center on the highlighted node(s) so the user actually sees them.
+      if (okNodes.nonempty()) {
+        const padding = okNodes.length === 1 ? 200 : 80;
+        S.cy.animate({
+          fit: { eles: okNodes, padding: padding },
+        }, { duration: 600, easing: "ease-in-out" });
+      } else if (ids.length) {
+        console.warn("[chat] highlight_nodes: no matching nodes in current subgraph for", ids);
+      }
       return ok;
     },
     highlight_path: (args) => {
@@ -2282,6 +2296,10 @@
       const r = S.cy.elements().aStar({ root: from, goal: to, directed: false });
       if (!r.found) return [];
       r.path.addClass("chat-highlight");
+      // Zoom to the whole path so source / intermediate / target are all in view.
+      S.cy.animate({
+        fit: { eles: r.path, padding: 80 },
+      }, { duration: 700, easing: "ease-in-out" });
       return r.path.nodes().map((n) => n.id());
     },
     highlight_cell_type_edges: (args) => {
