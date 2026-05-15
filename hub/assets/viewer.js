@@ -2239,11 +2239,21 @@
       }
       // NOW extract IDs (against fresh subgraph) and add to remaining actions
       const explicitIds = new Set();
+      const hasExplicitHighlight = explicitActions.some((a) =>
+        a.type === "highlight_nodes" || a.type === "highlight_path" ||
+        a.type === "focus_on_seed");
       for (const a of explicitActions) {
         if (a.type === "highlight_nodes") for (const id of (a.args?.ids || [])) explicitIds.add(id);
         if (a.type === "highlight_path") { if (a.args?.from) explicitIds.add(a.args.from); if (a.args?.to) explicitIds.add(a.args.to); }
       }
-      const autoIds = extractMentionedNodeIds(msg).filter((id) => !explicitIds.has(id));
+      // Auto-extract from prose ONLY when agent emitted no explicit highlight.
+      // Trust the agent's choice; don't flood the graph with every gene it mentioned.
+      const MAX_AUTO = 3;
+      const autoIds = hasExplicitHighlight
+        ? []
+        : extractMentionedNodeIds(msg)
+            .filter((id) => !explicitIds.has(id))
+            .slice(0, MAX_AUTO);
       const remainingActions = allActions.filter((a) =>
         a.type !== "set_disease" && a.type !== "set_target_cs" && a.type !== "set_ref_cs");
       if (autoIds.length) {
