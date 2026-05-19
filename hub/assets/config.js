@@ -6,24 +6,17 @@
 
 window.HUB_CONFIG = {
   // ---- Backend API URL ------------------------------------------------------
-  // Point this to the deployed Fly.io app for production.
-  // Default (commented) covers local development.
+  // Empty string = same-origin (browser hits the same host that served the
+  // page, e.g. https://178-105-162-190.nip.io). Set to a full URL only if
+  // backend is on a different host (cross-origin).
   //
-  // Production (post-deploy):
-  //   API_BASE: "https://heartgrn-api.fly.dev",
   // Local dev:
   //   API_BASE: "http://127.0.0.1:8766",
-  API_BASE: "https://heartgrn-api.fly.dev",
+  API_BASE: "",
 
-  // ---- Staging password gate ------------------------------------------------
-  // Set REQUIRE_PASSWORD=true and PASSWORD_SHA256 to the SHA-256 of your password.
-  // Compute on the command line:    echo -n 'your-password' | shasum -a 256
-  //
-  // Default password: "heartgrn-staging-2026"
-  //   sha256("heartgrn-staging-2026") =
-  //     a6eb31f7a98b6b9f81ae341c74b572ecff19fee07ef9c8e42add37ef59e4cf00
-  //
-  // To remove the password gate entirely, set REQUIRE_PASSWORD=false.
-  REQUIRE_PASSWORD: true,
-  PASSWORD_SHA256: "a6eb31f7a98b6b9f81ae341c74b572ecff19fee07ef9c8e42add37ef59e4cf00",
+  // ---- Page access gate -----------------------------------------------------
+  // Server-side gate (nginx Basic Auth or Cloudflare Access) is the source of
+  // truth. The client-side hash gate that used to live here is now disabled —
+  // it was offline-brute-forceable from the public JS.
+  REQUIRE_PASSWORD: false,
 };
