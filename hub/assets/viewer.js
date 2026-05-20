@@ -1008,19 +1008,25 @@
       wheelSensitivity: 0.2,
     });
     S.baselineZoom = S.cy.zoom();
-    // Pan the hub (highest-degree gene; fallback any node) to ~75% horizontal
-    // so the surrounding nodes have room on the left of the viewport.
-    {
+    wireCyHandlers();
+    applyZoomSizing();
+    // Pan the hub (= the node closest to the graph origin, which is where
+    // concentric_egrn.py anchors the central seed) to ~75% horizontal so the
+    // radial neighborhood spreads into the empty left half of the viewport.
+    // Use layoutstop so we measure rendered positions AFTER cy fits.
+    S.cy.one("layoutstop", () => {
       let hubNode = null;
-      let maxDeg = -1;
+      let minDistSq = Infinity;
       S.cy.nodes('node[kind = "gene"]').forEach((n) => {
-        const d = n.degree();
-        if (d > maxDeg) { maxDeg = d; hubNode = n; }
+        const p = n.position();
+        const dsq = p.x * p.x + p.y * p.y;
+        if (dsq < minDistSq) { minDistSq = dsq; hubNode = n; }
       });
       if (!hubNode) {
         S.cy.nodes().forEach((n) => {
-          const d = n.degree();
-          if (d > maxDeg) { maxDeg = d; hubNode = n; }
+          const p = n.position();
+          const dsq = p.x * p.x + p.y * p.y;
+          if (dsq < minDistSq) { minDistSq = dsq; hubNode = n; }
         });
       }
       if (hubNode) {
@@ -1028,10 +1034,11 @@
         const w = S.cy.width();
         const dx = (w * 0.75) - rp.x;
         S.cy.panBy({ x: dx, y: 0 });
+        console.log(`[hub-pan] hub=${hubNode.id()} graphPos=(${hubNode.position().x.toFixed(0)},${hubNode.position().y.toFixed(0)}) renderedX=${rp.x.toFixed(0)} viewportW=${w} dx=${dx.toFixed(0)}`);
+      } else {
+        console.log("[hub-pan] no node found");
       }
-    }
-    wireCyHandlers();
-    applyZoomSizing();
+    });
   }
 
   function applyZoomSizing() {
