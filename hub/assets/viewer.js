@@ -1791,11 +1791,18 @@
         if (q.length < 2) return;
         const sym = q.toUpperCase();
         if (!/^[A-Z][A-Z0-9-]{1,}$/.test(sym)) return;
+        // Loading placeholder for cross-payload portion — shown immediately
+        // and replaced when the fetch resolves.
+        const loading = document.createElement("div");
+        loading.className = "search-loading";
+        loading.innerHTML = `<span class="search-spinner"></span> Searching cross-payload index for <code>${escapeHtml(sym)}</code>…`;
+        gsRes.appendChild(loading);
         xpTimer = setTimeout(async () => {
           const seq = ++xpSeq;
           try {
             const resp = await fetch(`${S.literatureBaseUrl}/gene/search/${encodeURIComponent(sym)}`);
             if (seq !== xpSeq) return;
+            if (loading.parentNode) loading.remove();
             if (resp.ok) {
               const data = await resp.json();
               const rows = data.matches || [];
@@ -1806,7 +1813,9 @@
                 gsRes.innerHTML = '<div class="meta" style="padding:3px 0">no hits in current view or cross-payload index</div>';
               }
             }
-          } catch (_) {}
+          } catch (_) {
+            if (loading.parentNode) loading.remove();
+          }
         }, 300);
       });
       gs.addEventListener("keydown", (e) => {

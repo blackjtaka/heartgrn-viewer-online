@@ -270,6 +270,32 @@ button:active { transform: translateY(0.5px); }
   padding-left: 4px;
 }
 
+.search-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.search-loading code {
+  font-size: 11px;
+  color: var(--text);
+}
+.search-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid rgba(37, 99, 235, 0.25);
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: search-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes search-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Streaming chat bubble (replaces the spinner once text starts arriving) */
 .chat-streaming .thinking-row,
 .chat-streaming .thinking-bar { display: none !important; }
