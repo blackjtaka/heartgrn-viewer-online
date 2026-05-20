@@ -1180,6 +1180,9 @@ def verify_citations_in_response(obj: dict, grounding: list[dict], *,
                     real_titles[str(pid)] = summ[str(pid)]
         except Exception as e:
             log.warning("verification esummary failed: %s", e)
+    # Pre-compute confidence inputs (user votes + agent recurrence) so every
+    # output row can carry a confidence band.
+    cred_agg = _credible_aggregate()
     out = []
     for c in cits:
         pmid = str(c.get("pmid") or "")
@@ -1187,11 +1190,11 @@ def verify_citations_in_response(obj: dict, grounding: list[dict], *,
             out.append({**c, "verified": False, "hallucinated": True}); continue
         if pmid in grounding_pmids:
             g = grounding_pmids[pmid]
-            out.append({**g, "verified": True,
-                        "key_finding": c.get("key_finding") or g.get("title")})
+            row = {**g, "verified": True,
+                    "key_finding": c.get("key_finding") or g.get("title")}
         elif pmid in real_titles:
             r = real_titles[pmid]
-            out.append({
+            row = {
                 "pmid": pmid,
                 "title": r.get("title", "").strip("."),
                 "authors": ", ".join(a.get("name", "") for a in (r.get("authors") or [])[:3]) +
@@ -1200,18 +1203,72 @@ def verify_citations_in_response(obj: dict, grounding: list[dict], *,
                 "year": int(r.get("pubdate", "0").split()[0]) if r.get("pubdate") else None,
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                 "verified": True,
-                "off_grounding": True,        # not in our pre-fetched set
+                "off_grounding": True,
                 "key_finding": c.get("key_finding"),
-            })
+            }
         else:
-            out.append({
+            row = {
                 "pmid": pmid,
                 "title": c.get("title"),
                 "verified": False,
                 "hallucinated": True,
                 "key_finding": c.get("key_finding"),
-            })
+            }
+        # Attach user-vote counts + recurrence-derived confidence band.
+        agg = cred_agg.get(pmid, {})
+        up = agg.get("up", 0); down = agg.get("down", 0)
+        row["credible_up"] = up
+        row["credible_down"] = down
+        row["confidence"] = _credible_confidence(up, down, c.get("_recurrence", 0))
+        # `from_cache` is set on the grounding entry when we inject it from
+        # the agent-references cache (see extend_grounding_with_cache); pass
+        # it through so the UI can show a "cached" hint.
+        if isinstance(c, dict) and c.get("from_cache"):
+            row["from_cache"] = True
+        elif pmid in grounding_pmids and grounding_pmids[pmid].get("from_cache"):
+            row["from_cache"] = True
+        out.append(row)
     return out
+
+
+def extend_grounding_with_cache(grounding: list[dict], *,
+                                 disease: str, cs: str,
+                                 genes: list[str] | None = None,
+                                 max_add: int = 8) -> list[dict]:
+    """Append high-confidence cached agent references (matching the given
+    context) to the deterministic NCBI grounding list. Dedups by pmid;
+    NCBI prefetch entries always win. Returns the extended list."""
+    cached = _agent_refs_by_context(disease, cs, genes)
+    if not cached:
+        return grounding
+    cred_agg = _credible_aggregate()
+    seen = {c.get("pmid") for c in grounding if c.get("pmid")}
+    added = 0
+    for pmid, r in sorted(cached.items(),
+                          key=lambda kv: kv[1]["recurrence"], reverse=True):
+        if pmid in seen:
+            continue
+        agg = cred_agg.get(pmid, {"up": 0, "down": 0})
+        conf = _credible_confidence(agg["up"], agg["down"], r["recurrence"])
+        if conf != "high":
+            continue   # only auto-inject high-confidence cached refs
+        grounding.append({
+            "pmid": pmid,
+            "title": r["title"],
+            "journal": r["journal"],
+            "year": r["year"],
+            "key_finding": r["key_finding"],
+            "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+            "from_cache": True,
+            "_recurrence": r["recurrence"],
+        })
+        seen.add(pmid); added += 1
+        if added >= max_add:
+            break
+    if added:
+        log.info("grounding extended with %d high-conf cached refs (disease=%s, cs=%s)",
+                 added, disease, cs)
+    return grounding
 
 
 def chat_with_agent(message: str, graph_state: dict, history: list,
@@ -1223,9 +1280,15 @@ def chat_with_agent(message: str, graph_state: dict, history: list,
     # 1. RAG grounding — pre-fetch real PubMed citations
     terms = _extract_search_terms(message, graph_state)
     disease_id = graph_state.get("disease", "")
+    cs_id = graph_state.get("target_cs", "")
     grounding = fetch_grounding_citations(terms, disease_id,
                                            api_key=ncbi_api_key, email=ncbi_email)
-    log.info("chat grounding: %d citations from %d terms (%s)",
+    # 1a. Extend grounding with high-confidence cached agent refs (same
+    #     disease + cs context, or sharing a search term).
+    grounding = extend_grounding_with_cache(grounding,
+                                              disease=disease_id, cs=cs_id,
+                                              genes=terms)
+    log.info("chat grounding: %d citations (incl cache) from %d terms (%s)",
              len(grounding), len(terms), terms)
 
     # 1b. Cross-payload SNP + gene lookup — find any SNP/gene/TF mentioned
@@ -1261,6 +1324,11 @@ def chat_with_agent(message: str, graph_state: dict, history: list,
                                                      api_key=ncbi_api_key, email=ncbi_email)
     obj["grounding_count"] = len(grounding)
     obj["grounding_terms"] = terms
+    # 4. Persist every verified PMID with the current context so the next
+    #    chat in this context can reuse them as grounding.
+    _agent_refs_append(obj["citations"],
+                       {"disease": disease_id, "cs": graph_state.get("target_cs", ""),
+                        "genes": terms})
     return obj
 
 
@@ -1278,9 +1346,13 @@ def chat_with_agent_stream(message: str, graph_state: dict, history: list,
     """
     terms = _extract_search_terms(message, graph_state)
     disease_id = graph_state.get("disease", "")
+    cs_id = graph_state.get("target_cs", "")
     grounding = fetch_grounding_citations(terms, disease_id,
                                            api_key=ncbi_api_key, email=ncbi_email)
-    log.info("chat-stream grounding: %d citations from %d terms (%s)",
+    grounding = extend_grounding_with_cache(grounding,
+                                              disease=disease_id, cs=cs_id,
+                                              genes=terms)
+    log.info("chat-stream grounding: %d citations (incl cache) from %d terms (%s)",
              len(grounding), len(terms), terms)
     snp_hits, gene_hits = [], []
     if hub_dir is not None:
@@ -1318,6 +1390,8 @@ def chat_with_agent_stream(message: str, graph_state: dict, history: list,
                                                      api_key=ncbi_api_key, email=ncbi_email)
     obj["grounding_count"] = len(grounding)
     obj["grounding_terms"] = terms
+    _agent_refs_append(obj["citations"],
+                       {"disease": disease_id, "cs": cs_id, "genes": terms})
     yield ("done", obj)
 
 
@@ -1634,6 +1708,125 @@ def _hash_ip(ip: str) -> str:
     return hashlib.sha256(f"{ip}|{CREDIBLE_IP_SALT}".encode()).hexdigest()[:16]
 
 
+# ---- agent reference cache (tagged PMID store) -----------------------------
+AGENT_REFS_FILE = Path(os.environ.get(
+    "AGENT_REFS_FILE",
+    "/var/lib/heartgrn/agent_references.jsonl",
+))
+
+
+def _agent_refs_path() -> Path:
+    p = AGENT_REFS_FILE
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+    except (PermissionError, OSError):
+        return Path("/tmp/agent_references.jsonl")
+
+
+def _agent_refs_append(citations: list, context: dict) -> None:
+    """Append every cited PMID with the current chat context as tags.
+    Tags are how we filter cached refs for re-use on the next chat in the
+    same context (disease + cs + overlapping genes)."""
+    if not citations or not isinstance(citations, list):
+        return
+    p = _agent_refs_path()
+    try:
+        with p.open("a") as fh:
+            for c in citations:
+                pmid = str(c.get("pmid") or "").strip()
+                if not pmid or not pmid.isdigit():
+                    continue
+                if c.get("hallucinated") or not c.get("verified"):
+                    continue   # only persist real, verified PMIDs
+                entry = {
+                    "pmid": pmid,
+                    "title": (c.get("title") or "")[:250],
+                    "journal": (c.get("journal") or "")[:80],
+                    "year": c.get("year"),
+                    "key_finding": (c.get("key_finding") or "")[:300],
+                    "tags": {
+                        "disease": context.get("disease", ""),
+                        "cs": context.get("cs", ""),
+                        "genes": (context.get("genes") or [])[:20],
+                    },
+                    "ts": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                }
+                fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    except OSError as e:
+        log.warning("agent_refs append failed: %s", e)
+
+
+def _agent_refs_by_context(disease: str, cs: str,
+                            genes: list[str] | None = None) -> dict:
+    """Aggregate cached PMIDs matching the given context.
+    Returns {pmid: {pmid, title, journal, year, key_finding, recurrence,
+                     tags_seen, last_ts}}.
+    Match rule: same disease AND (same cs OR overlapping gene)."""
+    p = _agent_refs_path()
+    if not p.exists():
+        return {}
+    gene_set = set((g or "").upper() for g in (genes or []) if g)
+    out: dict = {}
+    try:
+        with p.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                pmid = str(e.get("pmid") or "")
+                if not pmid:
+                    continue
+                tags = e.get("tags") or {}
+                t_disease = tags.get("disease", "")
+                t_cs = tags.get("cs", "")
+                t_genes = set((g or "").upper() for g in (tags.get("genes") or []))
+                if t_disease != disease:
+                    continue
+                if cs and t_cs != cs and not (gene_set and t_genes & gene_set):
+                    continue
+                r = out.setdefault(pmid, {
+                    "pmid": pmid,
+                    "title": e.get("title", ""),
+                    "journal": e.get("journal", ""),
+                    "year": e.get("year"),
+                    "key_finding": e.get("key_finding", ""),
+                    "recurrence": 0,
+                    "last_ts": "",
+                    "tags_seen": [],
+                })
+                r["recurrence"] += 1
+                ts = e.get("ts", "")
+                if ts > r["last_ts"]:
+                    r["last_ts"] = ts
+                r["tags_seen"].append(tags)
+    except OSError:
+        return {}
+    return out
+
+
+def _credible_confidence(up: int, down: int, recurrence: int = 0) -> str:
+    """Combine user up/down votes + agent recurrence into a confidence band:
+       flagged → users have net-down-voted (don't trust)
+       high    → up - down >= 2, or recurrence >= 3
+       medium  → up - down == 1, or recurrence == 2
+       low     → no votes, single agent cite
+    """
+    up = int(up or 0); down = int(down or 0); recurrence = int(recurrence or 0)
+    if down > up:
+        return "flagged"
+    net = up - down
+    if net >= 2 or recurrence >= 3:
+        return "high"
+    if net == 1 or recurrence == 2:
+        return "medium"
+    return "low"
+
+
 def _credible_aggregate() -> dict:
     """Aggregate the append-only jsonl into per-PMID up/down votes.
     Latest vote per (pmid, ip_hash) wins, so users can change their mind."""
@@ -1792,6 +1985,44 @@ class LitHandler(BaseHTTPRequestHandler):
             pmid = m.group(1)
             agg = _credible_aggregate()
             self._json(200, {"pmid": pmid, **(agg.get(pmid, {"count": 0}))}); return
+        # GET /citations/cached?disease=...&cs=...&genes=GENE1,GENE2
+        # → list every agent-found PMID matching this context, with
+        #   recurrence + user up/down + derived confidence band.
+        if path == "/citations/cached":
+            qs = self.qs if hasattr(self, "qs") else {}
+            # Re-parse to be safe in case qs isn't on every code path.
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            disease = (qs.get("disease", [""])[0] or "").strip()
+            cs = (qs.get("cs", [""])[0] or "").strip()
+            genes_raw = (qs.get("genes", [""])[0] or "").strip()
+            genes = [g for g in re.split(r"[,\s]+", genes_raw) if g] if genes_raw else []
+            cached = _agent_refs_by_context(disease, cs, genes)
+            cred_agg = _credible_aggregate()
+            rows = []
+            for pmid, r in cached.items():
+                agg = cred_agg.get(pmid, {"up": 0, "down": 0})
+                rows.append({
+                    "pmid": pmid,
+                    "title": r["title"],
+                    "journal": r["journal"],
+                    "year": r["year"],
+                    "key_finding": r["key_finding"],
+                    "recurrence": r["recurrence"],
+                    "last_ts": r["last_ts"],
+                    "credible_up": agg.get("up", 0),
+                    "credible_down": agg.get("down", 0),
+                    "confidence": _credible_confidence(
+                        agg.get("up", 0), agg.get("down", 0), r["recurrence"]),
+                    "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                })
+            # Sort: high → medium → low → flagged, then by recurrence desc.
+            order = {"high": 0, "medium": 1, "low": 2, "flagged": 3}
+            rows.sort(key=lambda r: (order.get(r["confidence"], 9),
+                                       -r["recurrence"]))
+            self._json(200, {"refs": rows, "n": len(rows),
+                              "context": {"disease": disease, "cs": cs, "genes": genes}})
+            return
 
         # /snp/lookup/<rsid_or_variant_id> — debug helper
         m = re.fullmatch(r"/snp/lookup/(.+)", path)

@@ -511,7 +511,68 @@
     populateEdgeCtSelect();
     rebuild();
     banner("");
+    refreshCachedRefsPanel();
   }
+
+  // ---- Cached refs panel (📚 above chat) ----------------------------------
+  // Pulls cached agent-found PMIDs matching current (disease, cs) and renders
+  // them as a collapsed list with confidence pills. Called whenever the
+  // viewer context changes (selectTargetCs, selectDisease) and after each
+  // chat response (so newly-cited PMIDs show up immediately).
+  async function refreshCachedRefsPanel() {
+    const body = document.getElementById("chat-cached-refs-body");
+    const cnt  = document.getElementById("chat-cached-refs-count");
+    if (!body || !cnt) return;
+    if (!S.diseaseId) {
+      cnt.textContent = "Cached refs (0)";
+      body.innerHTML = "<em>Select a disease first.</em>";
+      return;
+    }
+    try {
+      const qs = new URLSearchParams({
+        disease: S.diseaseId || "",
+        cs: S.targetCs || "",
+        genes: "",
+      });
+      const r = await fetch(`${S.literatureBaseUrl}/citations/cached?${qs}`);
+      if (!r.ok) {
+        cnt.textContent = "Cached refs (?)";
+        body.innerHTML = `<em>fetch failed: HTTP ${r.status}</em>`;
+        return;
+      }
+      const data = await r.json();
+      const refs = data.refs || [];
+      cnt.textContent = `Cached refs (${refs.length})`;
+      if (!refs.length) {
+        body.innerHTML = "<em>No cached refs in this context yet.</em>";
+        return;
+      }
+      const confMap = {
+        "high":    { emoji: "🟢", cls: "cit-conf-high" },
+        "medium":  { emoji: "🟡", cls: "cit-conf-medium" },
+        "low":     { emoji: "⚪", cls: "cit-conf-low" },
+        "flagged": { emoji: "🔴", cls: "cit-conf-flagged" },
+      };
+      body.innerHTML = refs.map((c) => {
+        const ci = confMap[c.confidence] || confMap.low;
+        const meta = [c.year, c.journal].filter(Boolean).join(" · ");
+        return `
+          <div class="cached-ref-row">
+            <span class="cit-conf ${ci.cls}">${ci.emoji} ${c.confidence}</span>
+            <a href="${c.url}" target="_blank" rel="noopener">PMID ${c.pmid}</a>
+            <span class="cached-ref-meta">×${c.recurrence}${meta ? " · " + escapeHtml(meta) : ""}</span>
+            <div class="cached-ref-title">${escapeHtml(c.title || "(no title)")}</div>
+            ${c.key_finding ? `<div class="cached-ref-finding">${escapeHtml(c.key_finding)}</div>` : ""}
+          </div>
+        `;
+      }).join("");
+    } catch (e) {
+      console.warn("[cached-refs] fetch error", e);
+      cnt.textContent = "Cached refs (?)";
+      body.innerHTML = `<em>fetch error: ${escapeHtml(e.message || String(e))}</em>`;
+    }
+  }
+  window.refreshCachedRefsPanel = refreshCachedRefsPanel;
 
   function syncControlsFromState() {
     $("topn-slider").value = S.topN;
@@ -2289,6 +2350,21 @@
         : c.off_grounding
         ? `<span class="cit-badge warn">off-grounding</span>`
         : `<span class="cit-badge ok">✓ verified</span>`;
+      // Confidence pill (high/medium/low/flagged) derived server-side
+      // from user up/down votes + agent recurrence in this context.
+      const confMap = {
+        "high":    { emoji: "🟢", txt: "high",    cls: "cit-conf-high" },
+        "medium":  { emoji: "🟡", txt: "medium",  cls: "cit-conf-medium" },
+        "low":     { emoji: "⚪", txt: "low",     cls: "cit-conf-low" },
+        "flagged": { emoji: "🔴", txt: "flagged", cls: "cit-conf-flagged" },
+      };
+      const ci = confMap[c.confidence];
+      const confPill = ci
+        ? `<span class="cit-conf ${ci.cls}" title="Confidence = ${ci.txt} (user-vote net + agent recurrence in this context)">${ci.emoji} ${ci.txt}</span>`
+        : "";
+      const cachedPill = c.from_cache
+        ? `<span class="cit-cached" title="Re-used from a previous chat in this context">📚 cached</span>`
+        : "";
       const linkTxt = c.pmid ? `PMID ${c.pmid}` : "(no PMID)";
       const url = c.url || (c.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${c.pmid}/` : null);
       const link = url ? `<a href="${url}" target="_blank" rel="noopener">${linkTxt}</a>` : linkTxt;
@@ -2302,7 +2378,7 @@
              <button class="cit-vote-btn cit-vote-down" data-vote="down" title="Flag as not credible">👎 <span class="cit-down-count">${c.credible_down || 0}</span></button>
            </span>`
         : "";
-      div.innerHTML = `${badge} <b>${escapeHtml(c.title || "(no title)")}</b>`
+      div.innerHTML = `${badge} ${confPill} ${cachedPill} <b>${escapeHtml(c.title || "(no title)")}</b>`
         + `<div class="meta">${meta2} — ${link} ${voteWidget}</div>`
         + (c.key_finding ? `<div>${escapeHtml(c.key_finding)}</div>` : "");
       // Wire vote buttons
@@ -2742,6 +2818,9 @@
                         { grounding_count: data.grounding_count,
                           grounding_terms: data.grounding_terms });
       S.chatHistory.push({ role: "agent", content: msg, actions: allActions });
+      // Pull fresh cached-refs list now that this response just persisted
+      // new PMIDs (or bumped recurrence) on the server.
+      refreshCachedRefsPanel();
       // `message` = original user prompt; tell the dispatcher what the user
       // is interested in so highlight_nodes anchors the camera there.
       S.lastUserFocusIds = extractMentionedNodeIds(message);
