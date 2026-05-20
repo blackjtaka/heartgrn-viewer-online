@@ -692,28 +692,38 @@ ring = top-N seed genes, middle ring = peaks (regulatory regions), inner
 ring = TFs. Each peak→gene and TF→peak edge carries a set of source
 cell_types (which cardiac cell types the eGRN connection was inferred in).
 
-CITATION POLICY — STRICT, MINIMAL.
+CITATION POLICY — **ONE CITATION PER CLAIM**, INLINE.
 You will be given a **VERIFIED_CITATIONS** list (real PubMed entries
-retrieved deterministically before you ran). When you cite literature:
-  * **Cite AT MOST 5 papers per response** — pick the 2-5 MOST directly
-    relevant to the user's specific question. Fewer is better. Do not
-    list every paper in VERIFIED_CITATIONS; prefer quality over breadth.
-  * Cite ONLY entries from VERIFIED_CITATIONS. Reference them by their
-    PMID (e.g. "PMID 27009272") so the post-processor can validate.
-  * Do NOT fabricate PMIDs, DOIs, or titles. Do NOT pull citations from
-    your training data; if a paper isn't in VERIFIED_CITATIONS, do not
-    cite it.
-  * **If VERIFIED_CITATIONS is empty** (or none are directly relevant to
-    the user's specific question), **YOU SHOULD use WebSearch** (max 3
-    calls) to find real PubMed PMIDs. Return those PMIDs in the
-    `citations` field — the backend will re-verify them via NCBI
-    esummary. Any hallucinated/unreachable PMID will be flagged in red
-    so the user can spot fabrication; verified-but-off-grounding hits
-    get an orange "off-grounding" tag (good signal — the agent found
-    something the deterministic pool missed).
-  * Even with WebSearch, keep the citation count ≤ 5; pick the most
-    directly relevant. Do NOT cite from training data without WebSearch
-    confirmation.
+retrieved deterministically before you ran). The new rule for `message`:
+
+  * **Cite every factual / mechanistic claim inline** with one PMID.
+    A "claim" = any sentence that asserts biology, drug effect, GWAS
+    finding, mechanism, statistic, association, etc. that a reader
+    could plausibly want to verify. Example shape:
+      "TBX5 inactivation causes spontaneous atrial fibrillation
+       (PMID 27009272) and disrupts the atrial enhancer landscape
+       (PMID 30385751)."
+    Each clause that makes an independent claim gets its own PMID.
+    Two claims in one sentence → two PMIDs, separated by ;.
+    Pure descriptions of the current viewer state (e.g. "TBX5 is a
+    seed gene with GWAS-z 4304") are NOT claims and need no citation.
+  * Cite ONLY entries from VERIFIED_CITATIONS by their PMID
+    (e.g. "PMID 27009272"). The post-processor turns these into
+    coloured cards with the title + journal + year.
+  * Do NOT fabricate PMIDs, DOIs, or titles. Do NOT pull citations
+    from your training data.
+  * **Repeat citations are fine** — if the same PMID supports several
+    claims, cite it each time. The user wants to see exactly which
+    paper backs which statement, not a bibliography at the end.
+  * **No hard cap on citation count** for a given response — let the
+    claim count drive it. If you make 8 claims, cite 8 times. If you
+    make 2 claims, cite 2 times. The post-processor handles dedup in
+    the final "Citations" panel below the message.
+  * In the JSON `citations` field, include one entry per UNIQUE PMID
+    you cited, each with `pmid`, `key_finding` (one-line takeaway).
+  * **If VERIFIED_CITATIONS is empty** (or no entries cover a specific
+    claim), DROP that claim or rephrase it as a hypothesis ("It is
+    plausible that ...") with no PMID. Do NOT cite from training data.
 
 The graph_state JSON contains the COMPLETE current subgraph:
   • seed_genes — outer ring, full list with chr / gwas_z / target_de_z / specificity
