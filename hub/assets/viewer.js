@@ -45,8 +45,12 @@
 
     // API base resolved from window.HUB_CONFIG (set in index.html before script load).
     // Defaults to localhost so local dev works without any config.
-    literatureBaseUrl: (window.HUB_CONFIG && window.HUB_CONFIG.API_BASE)
-      || "http://127.0.0.1:8766",
+    // window.HUB_CONFIG.API_BASE === "" means same-origin (relative URLs).
+    // Use ?? (nullish coalesce) so the empty string is NOT replaced by the
+    // dev fallback; only undefined/null falls through.
+    literatureBaseUrl: (window.HUB_CONFIG && window.HUB_CONFIG.API_BASE != null)
+      ? window.HUB_CONFIG.API_BASE
+      : "http://127.0.0.1:8766",
     literatureCache: new Map(),   // key → result obj
     literaturePending: new Set(), // key currently in-flight
 
@@ -2598,7 +2602,9 @@
   // ---------- AG1 (AlphaGenome) variant-effect panel ----------
   let _ag1Panel = null;
   let _ag1Polls = new Map();
-  const HUB_BASE = "http://127.0.0.1:8765/hub";   // for static cache files
+  // Same-origin: nginx serves /opt/heartgrn/hub/ at the site root, so
+  // ag1_cache/... and other static cache paths are relative URLs.
+  const HUB_BASE = "";
 
   function ensureAg1Panel() {
     if (_ag1Panel) return _ag1Panel;
