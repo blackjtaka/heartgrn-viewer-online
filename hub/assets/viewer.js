@@ -2486,6 +2486,30 @@
         if (a.type === "set_disease") explicitDisease = a.args?.disease;
         if (a.type === "set_target_cs") explicitTargetCs = a.args?.cs;
       }
+
+      // Pass 1b — DEFENSIVE FALLBACK: if the agent's message says
+      //   "(switched to D / CS)" or "Switched to D / CS"
+      // but didn't include matching actions (Gemini sometimes drops them),
+      // parse the prose and inject set_disease + set_target_cs.
+      if (!explicitDisease && !explicitTargetCs && data.message) {
+        const m = data.message.match(/switched\s*(?:view\s*)?(?:to|view\s*to)\s+([A-Za-z]{2,4})\s*\/\s*([A-Za-z0-9_]+)/i);
+        if (m) {
+          const proseDisease = m[1].toUpperCase();
+          const proseCs = m[2];
+          if (S.manifest?.diseases?.[proseDisease] && proseDisease !== S.diseaseId) {
+            explicitActions.unshift({ type: "set_disease",
+                                       args: { disease: proseDisease }, _auto: "prose" });
+            explicitDisease = proseDisease;
+          }
+          const validCs = S.manifest?.diseases?.[proseDisease || S.diseaseId]?.target_cs_list || [];
+          const csMatch = validCs.find((c) => c.toLowerCase() === proseCs.toLowerCase());
+          if (csMatch && csMatch !== S.targetCs) {
+            explicitActions.push({ type: "set_target_cs",
+                                    args: { cs: csMatch }, _auto: "prose" });
+            explicitTargetCs = csMatch;
+          }
+        }
+      }
       // Auto-detect disease keywords from USER message (only) — clear intent
       const diseaseHints = {
         CAD: /\b(CAD|coronary artery disease|coronary disease|myocardial infarction)\b/i,
