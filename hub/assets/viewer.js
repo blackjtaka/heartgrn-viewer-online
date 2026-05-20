@@ -2440,16 +2440,18 @@
     const anthropicKey = localStorage.getItem("anthropic_api_key") || "";
     const validKey = anthropicKey && (anthropicKey.startsWith("sk-ant-") || anthropicKey.startsWith("AIza"));
     if (!validKey) {
+      stopThinking();
       if (typeof window.openByokModal === "function") {
-        stopThinking();
         appendChatMessage("system", "Chat needs your LLM API key (Anthropic or Gemini). Opening setup…");
         window.openByokModal();
-        return;
       } else {
-        stopThinking();
         appendChatMessage("system", "API key required (sk-ant-... for Anthropic, AIza... for Gemini). Set it via the Activate button.");
-        return;
       }
+      // CRITICAL: reset state so the Send button is usable once the user
+      // closes the modal (or the user can retry without reloading).
+      S.chatPending = false;
+      $("chat-send").disabled = false;
+      return;
     }
 
     let data;
