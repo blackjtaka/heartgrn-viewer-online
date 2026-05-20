@@ -305,7 +305,10 @@ def _call_anthropic_sdk(prompt: str, *, api_key: str,
     if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
         tools.append({"type": "web_search_20250305",
                       "name": "web_search",
-                      "max_uses": 5})
+                      "max_uses": 15})
+        tools.append({"type": "web_fetch_20250910",
+                      "name": "web_fetch",
+                      "max_uses": 15})
 
     try:
         resp = client.messages.create(
@@ -349,6 +352,12 @@ def _call_gemini_sdk(prompt: str, *, api_key: str,
     tools_arg = []
     if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
         tools_arg.append(types.Tool(google_search=types.GoogleSearch()))
+        # url_context lets Gemini fetch a specific URL (e.g. the PubMed page
+        # for a candidate PMID) to verify reachability + title before citing.
+        try:
+            tools_arg.append(types.Tool(url_context=types.UrlContext()))
+        except AttributeError:
+            pass  # older google-genai versions without UrlContext type
 
     try:
         resp = client.models.generate_content(
@@ -392,7 +401,8 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
         client = Anthropic(api_key=api_key, timeout=timeout)
         tools = []
         if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 15})
+            tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 15})
         with client.messages.stream(
             model=model or "claude-sonnet-4-6",
             max_tokens=max_tokens,
@@ -412,6 +422,10 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
         tools_arg = []
         if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
             tools_arg.append(types.Tool(google_search=types.GoogleSearch()))
+            try:
+                tools_arg.append(types.Tool(url_context=types.UrlContext()))
+            except AttributeError:
+                pass
         # Try requested model; on 503/UNAVAILABLE fall back to gemini-2.0-flash
         # (more stable backend) before giving up. Each attempt has its own
         # token budget; if the first emits any text we don't fall back.
@@ -723,13 +737,31 @@ retrieved deterministically before you ran). The new rule for `message`:
     you cited, each with `pmid`, `key_finding` (one-line takeaway).
   * **If VERIFIED_CITATIONS is empty** OR no entry covers a specific
     claim, **YOU MUST actively use WebSearch / google_search (up to
-    5 calls)** to find real PubMed PMIDs for the user's question.
+    15 calls)** to find real PubMed PMIDs for the user's question.
     Put those PMIDs inline in the `message` AND in the JSON
     `citations` field — the backend will re-verify each one via NCBI
     esummary. Verified-but-off-grounding hits get an orange tag in
     the UI (positive signal: you found something the deterministic
     NCBI prefetch missed). Hallucinated/unreachable PMIDs get
     flagged red.
+
+  * **MANDATORY SELF-VERIFICATION (after WebSearch, before citing)**:
+    For EVERY PMID you intend to cite that did NOT come from
+    VERIFIED_CITATIONS, you MUST re-access the PubMed page yourself
+    to confirm it actually resolves:
+      1. Call `web_fetch` (Anthropic) / `url_context` (Gemini) on
+         `https://pubmed.ncbi.nlm.nih.gov/<pmid>/` for each candidate
+         PMID.
+      2. Confirm: (a) the page returns content (not 404 / "not
+         found"), and (b) the title on the page is on-topic for the
+         claim you are making.
+      3. If either check fails → DROP that PMID. Do NOT cite it.
+         Try another candidate or rephrase as a hypothesis.
+      4. Only PMIDs that survived this self-fetch step go into the
+         inline citation AND `citations[]`.
+    Budget your tool calls: roughly half for search, half for fetch.
+    The user has explicitly asked for this re-access step — skipping
+    it is a policy violation.
   * **FORBIDDEN FALLBACK**: Do NOT tell the user "search PubMed
     yourself"; do NOT paste a `pubmed.ncbi.nlm.nih.gov/?term=...`
     URL; do NOT say "VERIFIED_CITATIONS is empty so no papers can be
