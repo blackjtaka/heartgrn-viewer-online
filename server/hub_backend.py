@@ -306,14 +306,15 @@ def _call_anthropic_sdk(prompt: str, *, api_key: str,
         # Tool-use round-trips re-send the full prompt + accumulated
         # tool_use/tool_result blocks each turn, which compounds against
         # the org's per-minute input-token cap (30k/min on Anthropic
-        # Tier 1). Keep budgets tight: ~5 searches + 8 fetches = enough
-        # for per-claim citation + verification without blowing 30k/min.
+        # Tier 1) AND lengthens the user's wait. Keep budgets minimal:
+        # ~3 searches + 5 fetches = enough for 2-3 strong citations
+        # with verification.
         tools.append({"type": "web_search_20250305",
                       "name": "web_search",
-                      "max_uses": 5})
+                      "max_uses": 3})
         tools.append({"type": "web_fetch_20250910",
                       "name": "web_fetch",
-                      "max_uses": 8})
+                      "max_uses": 5})
 
     try:
         resp = client.messages.create(
@@ -397,7 +398,14 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                      timeout: int = 300,
                      model: str | None = None,
                      max_tokens: int = 4096):
-    """Yield text chunks from the LLM streaming endpoint. Dispatch by key prefix."""
+    """Yield (kind, payload) tuples from the LLM streaming endpoint.
+
+      kind == 'text' : payload is a string of text deltas
+      kind == 'tool' : payload is {'name': 'web_search'|'web_fetch'|...,
+                                   'input': {<input dict>}}
+
+    Dispatch by api_key prefix (sk-ant-* → Anthropic, else Gemini).
+    """
     if api_key and api_key.startswith("sk-ant-"):
         try:
             from anthropic import Anthropic, RateLimitError, AuthenticationError, APIError
@@ -409,8 +417,8 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
             # Same budget as non-streaming path; multi-turn tool use
             # compounds against per-minute input-token caps. See
             # _call_anthropic_sdk for the reasoning.
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
-            tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 8})
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 3})
+            tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 5})
         try:
             with client.messages.stream(
                 model=model or "claude-sonnet-4-6",
@@ -418,9 +426,28 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                 tools=tools or [],
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
-                for text in stream.text_stream:
-                    if text:
-                        yield text
+                # Iterate raw events so we can surface tool_use blocks to
+                # the UI ("Searching PubMed for ..." etc.) in addition to
+                # the text deltas. Server-side tools (web_search,
+                # web_fetch) appear as content_block_start events with
+                # block.type == 'server_tool_use'.
+                for event in stream:
+                    et = getattr(event, "type", None)
+                    if et == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        bt = getattr(block, "type", None)
+                        if bt in ("server_tool_use", "tool_use"):
+                            yield ("tool", {
+                                "name": getattr(block, "name", "tool"),
+                                "input": getattr(block, "input", None) or {},
+                            })
+                    elif et == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        dt = getattr(delta, "type", None)
+                        if dt == "text_delta":
+                            text = getattr(delta, "text", "") or ""
+                            if text:
+                                yield ("text", text)
         except RateLimitError as e:
             # Map the per-minute input-token cap (30k/min on Tier 1) to a
             # user-friendly hint that suggests waiting or switching key.
@@ -460,6 +487,7 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                 continue
             seen.add(mdl)
             emitted_any = False
+            grounding_announced = False
             try:
                 for chunk in client.models.generate_content_stream(
                     model=mdl,
@@ -469,9 +497,25 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                         tools=tools_arg or None,
                     ),
                 ):
+                    # Announce grounding tool use the first time we see
+                    # web_search queries in the chunk metadata, so the UI
+                    # can show "Searching PubMed for ...".
+                    if not grounding_announced:
+                        try:
+                            gm = (chunk.candidates[0].grounding_metadata
+                                  if getattr(chunk, "candidates", None) else None)
+                            queries = getattr(gm, "web_search_queries", None) if gm else None
+                            if queries:
+                                grounding_announced = True
+                                yield ("tool", {
+                                    "name": "google_search",
+                                    "input": {"query": " / ".join(queries[:3])},
+                                })
+                        except (AttributeError, IndexError, TypeError):
+                            pass
                     if chunk.text:
                         emitted_any = True
-                        yield chunk.text
+                        yield ("text", chunk.text)
                 return                      # ok, stream finished
             except Exception as e:
                 last_err = e
@@ -728,7 +772,7 @@ ring = top-N seed genes, middle ring = peaks (regulatory regions), inner
 ring = TFs. Each peak→gene and TF→peak edge carries a set of source
 cell_types (which cardiac cell types the eGRN connection was inferred in).
 
-CITATION POLICY — **ONE CITATION PER CLAIM**, INLINE.
+CITATION POLICY — **INLINE, BUT MODEST IN COUNT**.
 You will be given a **VERIFIED_CITATIONS** list (real PubMed entries
 retrieved deterministically before you ran). The new rule for `message`:
 
@@ -751,10 +795,12 @@ retrieved deterministically before you ran). The new rule for `message`:
   * **Repeat citations are fine** — if the same PMID supports several
     claims, cite it each time. The user wants to see exactly which
     paper backs which statement, not a bibliography at the end.
-  * **No hard cap on citation count** for a given response — let the
-    claim count drive it. If you make 8 claims, cite 8 times. If you
-    make 2 claims, cite 2 times. The post-processor handles dedup in
-    the final "Citations" panel below the message.
+  * **Target 2-5 unique citations per response.** Inline citations on
+    the 2-5 most critical claims; for secondary supporting points you
+    may either re-use one of those PMIDs or leave the sentence
+    uncited. Do NOT try to cite every clause — that bloats the reply
+    and wastes the tool-call budget. The post-processor dedups for
+    the side panel.
   * In the JSON `citations` field, include one entry per UNIQUE PMID
     you cited, each with `pmid`, `key_finding` (one-line takeaway).
   * **If VERIFIED_CITATIONS is empty** OR no entry covers a specific
@@ -1250,10 +1296,17 @@ def chat_with_agent_stream(message: str, graph_state: dict, history: list,
                                 gene_cross_hits=gene_hits)
     tools = ["WebSearch"] if use_websearch else None
     raw_parts = []
-    for chunk in _stream_llm_sdk(prompt, api_key=anthropic_api_key,
-                                  allowed_tools=tools, timeout=timeout):
-        raw_parts.append(chunk)
-        yield ("chunk", {"text": chunk})
+    for kind, payload in _stream_llm_sdk(prompt, api_key=anthropic_api_key,
+                                          allowed_tools=tools, timeout=timeout):
+        if kind == "text":
+            raw_parts.append(payload)
+            yield ("chunk", {"text": payload})
+        elif kind == "tool":
+            # Surface server-tool use ("Searching PubMed for ...",
+            # "Fetching pubmed.ncbi.nlm.nih.gov/<pmid>/") to the UI as
+            # an SSE 'tool' event so the chat bubble can show an
+            # informative pill while the model is mid-tool-call.
+            yield ("tool", payload)
     raw = "".join(raw_parts)
     obj = _strip_json(raw)
     if not isinstance(obj, dict):

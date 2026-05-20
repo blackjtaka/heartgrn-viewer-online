@@ -137,7 +137,7 @@
   // for each new partial message, and resolves with the final 'done' payload.
   // Aborts after 120s; throws {status, body?, errorPayload?, aborted?} on
   // HTTP / SSE error / timeout.
-  async function fetchChatStreaming(url, options, onUpdate) {
+  async function fetchChatStreaming(url, options, onUpdate, onTool) {
     const ac = new AbortController();
     const timeoutId = setTimeout(() => ac.abort(), 120_000);
     let resp;
@@ -194,6 +194,11 @@
               lastShown = partial;
               onUpdate && onUpdate(partial);
             }
+          } catch (_) {}
+        } else if (event === "tool") {
+          try {
+            const o = JSON.parse(dataStr);
+            onTool && onTool(o);
           } catch (_) {}
         } else if (event === "done") {
           try { final = JSON.parse(dataStr); } catch (_) {}
@@ -2502,6 +2507,33 @@
         ph.classList.add("chat-streaming");
         ph.innerHTML = `<div class="streamed-text">${escapeHtml(partialText)}</div>`;
         body.scrollTop = body.scrollHeight;
+      }, (toolEvent) => {
+        // Tool-use indicator. Anthropic surfaces web_search /
+        // web_fetch as separate server_tool_use blocks; Gemini emits
+        // a single google_search announcement when grounding kicks
+        // in. Replace the rolling-clock spinner with a labelled pill
+        // until the first text chunk arrives.
+        const name = toolEvent && toolEvent.name || "tool";
+        const input = (toolEvent && toolEvent.input) || {};
+        let label;
+        if (name === "web_search" || name === "google_search") {
+          const q = (input.query || "").toString().slice(0, 80);
+          label = q ? `🔎 Searching PubMed for: <i>${escapeHtml(q)}</i>`
+                    : `🔎 Searching PubMed…`;
+        } else if (name === "web_fetch") {
+          const url = (input.url || "").toString().slice(0, 80);
+          label = url ? `📄 Fetching <i>${escapeHtml(url)}</i>`
+                      : `📄 Fetching PubMed page…`;
+        } else {
+          label = `⚙️ Using tool: ${escapeHtml(name)}`;
+        }
+        // Only override the placeholder if no streamed text has begun
+        // (avoid clobbering live partial response).
+        if (!ph.classList.contains("chat-streaming")) {
+          ph.classList.add("chat-tool-busy");
+          ph.innerHTML = `<div class="tool-indicator">${label}</div>`;
+          body.scrollTop = body.scrollHeight;
+        }
       });
     } catch (err) {
       stopThinking();
