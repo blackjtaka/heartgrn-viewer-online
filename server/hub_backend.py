@@ -518,6 +518,88 @@ def agent_search(type_: str, ctx: dict, *,
     return obj
 
 
+# Mapping from cell_state -> broader cell_type (used to expand user phrases
+# like "ValveFB" / "Valve Fibroblasts" into the full set of cell_states the
+# viewer carries).
+STATE_TO_TYPE: dict[str, str] = {
+    "VentricularCardiomyocytesLeft": "VentricularCardiomyocytes",
+    "VentricularCardiomyocytesLeftStressed": "VentricularCardiomyocytes",
+    "VentricularCardiomyocytesRight": "VentricularCardiomyocytes",
+    "VentricularCardiomyocytesSeptal": "VentricularCardiomyocytes",
+    "VentricularCardiomyocytesRightStressed": "VentricularCardiomyocytes",
+    "ValveFibroblastsImmune": "ValveFibroblasts",
+    "ValveFibroblastsCardiacSkeleton": "ValveFibroblasts",
+    "ValveFibroblastsBaseline": "ValveFibroblasts",
+    "SmoothMuscleCellsPericytesIntermediate": "SmoothMuscleCells",
+    "SmoothMuscleCellsGreatArtery": "SmoothMuscleCells",
+    "SmoothMuscleCellsCoronaryArtery": "SmoothMuscleCells",
+    "SmoothMuscleCellsArterial": "SmoothMuscleCells",
+    "SmoothMuscleCellsAtrial": "SmoothMuscleCells",
+    "PericytesVentricular": "Pericytes",
+    "PericytesAtrial": "Pericytes",
+    "NeuralCells": "NeuralCells",
+    "NeuralCellsNerveAssociated": "NeuralCells",
+    "SchwannCells": "NeuralCells",
+    "NerveFibroblastsEndoneurial": "NerveFibroblasts",
+    "NerveFibroblastsPerineurial": "NerveFibroblasts",
+    "MacrophagesLYVE1pos": "MyeloidCells",
+    "Mono_Macrophages": "MyeloidCells",
+    "MacrophagesCycling": "MyeloidCells",
+    "MacrophagesCXCL8pos": "MyeloidCells",
+    "DendriticCells": "MyeloidCells",
+    "MacrophagesLYVE1posAGBL4pos": "MyeloidCells",
+    "Monocytes": "MyeloidCells",
+    "MacrophagesLipidAssociated": "MyeloidCells",
+    "MastCells": "MastCells",
+    "TCellsCD8pos": "LymphoidCellsNonB",
+    "TCellsCD4pos": "LymphoidCellsNonB",
+    "NaturalKillerCellsCD56hi": "LymphoidCellsNonB",
+    "NaturalKillerCellsCD16hi": "LymphoidCellsNonB",
+    "TCellsCD4posRegulatory": "LymphoidCellsNonB",
+    "BPlasmaCells": "LymphoidCellsB",
+    "BCells": "LymphoidCellsB",
+    "LymphaticEndothelialCells": "LymphaticEndothelialCells",
+    "FibroblastsAtrial": "Fibroblasts",
+    "FibroblastsPCOLCE2": "Fibroblasts",
+    "FibroblastsCD44": "Fibroblasts",
+    "FibroblastsAPOD": "Fibroblasts",
+    "FibroblastsVascular": "Fibroblasts",
+    "FibroblastsVentricular": "Fibroblasts",
+    "FibroblastsActivated": "Fibroblasts",
+    "FibroblastsCXCL8": "Fibroblasts",
+    "EpicardialCells": "EpicardialCells",
+    "EndothelialCellsCapillary": "EndothelialCells",
+    "EndothelialCellsVenous": "EndothelialCells",
+    "EndothelialCellsArterial": "EndothelialCells",
+    "EndothelialCellsArterialLarge": "EndothelialCells",
+    "EndothelialCellsNOVA1Capillary": "EndothelialCells",
+    "EndothelialCellsNOVA1Arterial": "EndothelialCells",
+    "EndothelialCellsNOVA1Venous": "EndothelialCells",
+    "EndocardialCells": "EndocardialCells",
+    "VentricularConductionSystemDistal": "CardiacConductionSystem",
+    "VentricularConductionSystemProximal": "CardiacConductionSystem",
+    "AtrialConductionSystem": "CardiacConductionSystem",
+    "PacemakerCells": "CardiacConductionSystem",
+    "MyocardialSleeveCells": "CardiacConductionSystem",
+    "AtrialCardiomyocytesRight": "AtrialCardiomyocytes",
+    "AtrialCardiomyocytesLeft": "AtrialCardiomyocytes",
+    "AtrialCardiomyocytesLeftStressed": "AtrialCardiomyocytes",
+    "AtrialCardiomyocytesRightStressed": "AtrialCardiomyocytes",
+    "Adipocytes": "Adipocytes",
+    "AdipocytesAKR1C1": "Adipocytes",
+}
+
+
+def _type_to_states() -> dict[str, list[str]]:
+    """Reverse mapping (cell_type -> sorted list of cell_states)."""
+    out: dict[str, list[str]] = {}
+    for state, ctype in STATE_TO_TYPE.items():
+        out.setdefault(ctype, []).append(state)
+    for ctype in out:
+        out[ctype].sort()
+    return out
+
+
 CHAT_SYSTEM_PROMPT = """You are an interactive assistant embedded in a Cytoscape eGRN viewer
 for cardiac GWAS analysis. The user is exploring a concentric network: outer
 ring = top-N seed genes, middle ring = peaks (regulatory regions), inner
@@ -565,6 +647,30 @@ You can:
   2. RETURN ACTIONS that modify the viewer to make the user's question
      visible: highlight nodes, highlight paths, change top-N, focus on a
      seed, trigger PubMed search, etc.
+
+CELL TYPE vs CELL STATE — IMPORTANT.
+The viewer carries 65+ cell STATES (e.g. ValveFibroblastsImmune,
+ValveFibroblastsBaseline, ValveFibroblastsCardiacSkeleton), which roll
+up to broader cell TYPES (e.g. all three above → ValveFibroblasts).
+A CELL_TYPE_TO_STATES mapping is provided in the prompt below.
+When the user mentions a cell TYPE (or a common abbreviation like
+"ValveFB", "SMC", "VCM", "ACM", "EC"), do NOT silently pick one state.
+Instead:
+  (a) Consider all related cell STATES from the mapping.
+  (b) Use the CROSS_PAYLOAD_GENE_HITS / CROSS_PAYLOAD_SNP_HITS sections
+      (when present) to identify which related cell_state has the
+      strongest signal for the user's question (highest inner_min
+      GWAS-z × DE-z, most SNP credible sets, etc).
+  (c) Emit set_target_cs to that best-matching cell_state, then report
+      the consolidated finding (which states show signal, which don't).
+Common short aliases users use:
+   "ValveFB" / "valve fibroblast"   → ValveFibroblasts*
+   "SMC" / "smooth muscle"          → SmoothMuscleCells*
+   "VCM" / "ventricular CM"         → VentricularCardiomyocytes*
+   "ACM" / "atrial CM"              → AtrialCardiomyocytes*
+   "EC" / "endothelial"             → EndothelialCells* (incl NOVA1 subset)
+   "Myeloid" / "macrophage"         → MyeloidCells* (macrophages + DC + mono)
+   "CCS" / "conduction system"      → CardiacConductionSystem*
 
 PROACTIVE ROUTING — DO NOT ASK FOR PERMISSION.
 When the user's question is grounded in a disease or cell_state that does
@@ -696,6 +802,8 @@ def build_chat_prompt(message: str, graph_state: dict,
         state_json = json.dumps(truncated, separators=(",", ":"))
 
     parts = [CHAT_SYSTEM_PROMPT,
+             "\n## CELL_TYPE_TO_STATES (use to expand user phrases)\n"
+             f"```json\n{json.dumps(_type_to_states(), indent=1)}\n```\n",
              f"\n## Current viewer state\n```json\n{state_json}\n```\n"]
     if grounding_citations:
         cit_compact = json.dumps([{
