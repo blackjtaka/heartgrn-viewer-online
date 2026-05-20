@@ -1223,6 +1223,75 @@ def _ag1_render_subprocess(hub_dir: Path, variant_id: str,
         return {"error": str(e)}
 
 
+# ---- credible citation set (user-curated trusted PMIDs) ---------------------
+CREDIBLE_CITATIONS_FILE = Path(os.environ.get(
+    "CREDIBLE_CITATIONS_FILE",
+    "/var/lib/heartgrn/credible_citations.jsonl",
+))
+CREDIBLE_IP_SALT = os.environ.get("CREDIBLE_IP_SALT", "credible-default-salt")
+
+
+def _credible_path() -> Path:
+    """Return write-target; fall back to /tmp if /var/lib path is read-only."""
+    p = CREDIBLE_CITATIONS_FILE
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+    except (PermissionError, OSError):
+        return Path("/tmp/credible_citations.jsonl")
+
+
+def _hash_ip(ip: str) -> str:
+    """One-way hash so we can dedup without storing raw client IPs."""
+    return hashlib.sha256(f"{ip}|{CREDIBLE_IP_SALT}".encode()).hexdigest()[:16]
+
+
+def _credible_aggregate() -> dict:
+    """Aggregate the append-only jsonl into per-PMID up/down votes.
+    Latest vote per (pmid, ip_hash) wins, so users can change their mind."""
+    p = _credible_path()
+    if not p.exists():
+        return {}
+    # Read all entries, keep the latest per (pmid, ip_hash) pair.
+    latest: dict = {}  # (pmid, ip_hash) -> entry
+    try:
+        with p.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                pmid = entry.get("pmid")
+                ip_hash = entry.get("ip_hash", "")
+                if not pmid:
+                    continue
+                key = (pmid, ip_hash)
+                prev = latest.get(key)
+                if prev is None or entry.get("ts", "") >= prev.get("ts", ""):
+                    latest[key] = entry
+    except OSError:
+        return {}
+    # Aggregate per pmid.
+    out: dict = {}
+    for (pmid, _ip), entry in latest.items():
+        vote = entry.get("vote", "up")
+        e = out.setdefault(pmid, {"up": 0, "down": 0, "last_ts": "",
+                                   "contexts": [], "title": ""})
+        if vote == "up":
+            e["up"] += 1
+        elif vote == "down":
+            e["down"] += 1
+        e["last_ts"] = max(e["last_ts"], entry.get("ts", ""))
+        if entry.get("context") and entry["context"] not in e["contexts"]:
+            e["contexts"].append(entry["context"])
+        if entry.get("title") and not e["title"]:
+            e["title"] = entry["title"]
+    return out
+
+
 # ---- HTTP handler -----------------------------------------------------------
 
 class LitHandler(BaseHTTPRequestHandler):
@@ -1326,6 +1395,16 @@ class LitHandler(BaseHTTPRequestHandler):
                         })
                 status["figures"] = figs
             self._json(200, status); return
+        # GET /citations/credible — list user-curated trusted PMIDs (aggregated)
+        if path == "/citations/credible":
+            agg = _credible_aggregate()
+            self._json(200, {"credible": agg, "total_pmids": len(agg)}); return
+        m = re.fullmatch(r"/citations/credible/(\d{1,10})", path)
+        if m:
+            pmid = m.group(1)
+            agg = _credible_aggregate()
+            self._json(200, {"pmid": pmid, **(agg.get(pmid, {"count": 0}))}); return
+
         # /snp/lookup/<rsid_or_variant_id> — debug helper
         m = re.fullmatch(r"/snp/lookup/(.+)", path)
         if m:
@@ -1454,6 +1533,48 @@ class LitHandler(BaseHTTPRequestHandler):
                      graph_state.get("disease", "?"),
                      graph_state.get("target_cs", "?"))
             self._json(200, resp)
+            return
+
+        # POST /citations/credible — user votes a PMID as credible (up) or
+        # not credible (down). Append-only jsonl; same (pmid, IP) can flip
+        # vote later — latest wins on aggregate.
+        if path == "/citations/credible":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            try:
+                body = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                self._json(400, {"error": "bad json"}); return
+            pmid = str(body.get("pmid") or "").strip()
+            if not pmid or not re.fullmatch(r"\d{1,10}", pmid):
+                self._json(400, {"error": "valid pmid required"}); return
+            vote = str(body.get("vote") or "up").strip().lower()
+            if vote not in ("up", "down"):
+                self._json(400, {"error": "vote must be 'up' or 'down'"}); return
+            context = str(body.get("context") or "").strip()[:300]
+            title = str(body.get("title") or "").strip()[:300]
+            client_ip = (self.headers.get("CF-Connecting-IP")
+                         or (self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or None)
+                         or self.client_address[0])
+            entry = {
+                "pmid": pmid,
+                "ip_hash": _hash_ip(client_ip),
+                "vote": vote,
+                "ts": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                "context": context,
+                "title": title,
+            }
+            p = _credible_path()
+            try:
+                with p.open("a") as fh:
+                    fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
+            except OSError as e:
+                self._json(500, {"error": f"write failed: {e}"}); return
+            agg = _credible_aggregate().get(pmid, {"up": 0, "down": 0})
+            log.info("credible vote pmid=%s vote=%s up=%d down=%d",
+                     pmid, vote, agg.get("up", 0), agg.get("down", 0))
+            self._json(200, {"pmid": pmid, "vote": vote,
+                             "up": agg.get("up", 0), "down": agg.get("down", 0)})
             return
 
         m = re.fullmatch(r"/literature/(\w+)/(.+)", path)

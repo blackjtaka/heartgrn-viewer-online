@@ -209,6 +209,31 @@ button:active { transform: translateY(0.5px); }
 .spec-sw-ref  { border-color: #047857; }
 .spec-sw-none { border-color: #a8a29e; }
 
+/* Credible-citation up/down vote widget (chat citation row) */
+.cit-vote {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.cit-vote-btn {
+  padding: 1px 6px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1.3;
+}
+.cit-vote-btn:hover {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: var(--accent, #2563eb);
+}
+.cit-vote-btn:disabled { opacity: 0.5; cursor: wait; }
+.cit-vote-up.voted   { background: #d1fae5; color: #047857; border-color: #6ee7b7; }
+.cit-vote-down.voted { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+
 .tt-snps { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
 .tt-snp-card {
   padding: 8px 10px; margin: 6px 0;

@@ -1976,10 +1976,25 @@
     return div;
   }
 
-  function appendChatMessage(role, content, actions, citations, meta) {
+  async function appendChatMessage(role, content, actions, citations, meta) {
     const body = $("chat-messages");
     body.appendChild(chatMsgEl(role, content, actions));
     if (Array.isArray(citations) && citations.length) {
+      // Hydrate citations with existing credible vote counts from the server,
+      // so the 👍/👎 buttons show the running tally even on first display.
+      try {
+        const r = await fetch(`${S.literatureBaseUrl}/citations/credible`);
+        if (r.ok) {
+          const data = await r.json();
+          const cred = data.credible || {};
+          for (const c of citations) {
+            if (c.pmid && cred[c.pmid]) {
+              c.credible_up   = cred[c.pmid].up   || 0;
+              c.credible_down = cred[c.pmid].down || 0;
+            }
+          }
+        }
+      } catch (_) {}
       body.appendChild(citationsEl(citations, meta));
     } else if (meta?.grounding_count === 0 && role === "agent") {
       const note = document.createElement("div");
@@ -2015,9 +2030,46 @@
       const url = c.url || (c.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${c.pmid}/` : null);
       const link = url ? `<a href="${url}" target="_blank" rel="noopener">${linkTxt}</a>` : linkTxt;
       const meta2 = [c.year, c.journal, c.authors].filter(Boolean).join(" · ");
+      // User-curated credibility: 👍 / 👎 buttons live next to the link.
+      // Server tracks votes per PMID (dedup by IP hash). Disabled until a
+      // valid PMID exists.
+      const voteWidget = c.pmid
+        ? `<span class="cit-vote" data-pmid="${c.pmid}" data-title="${escapeHtml(c.title || "")}">
+             <button class="cit-vote-btn cit-vote-up"   data-vote="up"   title="Mark as credible (after you read the paper)">👍 <span class="cit-up-count">${c.credible_up || 0}</span></button>
+             <button class="cit-vote-btn cit-vote-down" data-vote="down" title="Flag as not credible">👎 <span class="cit-down-count">${c.credible_down || 0}</span></button>
+           </span>`
+        : "";
       div.innerHTML = `${badge} <b>${escapeHtml(c.title || "(no title)")}</b>`
-        + `<div class="meta">${meta2} — ${link}</div>`
+        + `<div class="meta">${meta2} — ${link} ${voteWidget}</div>`
         + (c.key_finding ? `<div>${escapeHtml(c.key_finding)}</div>` : "");
+      // Wire vote buttons
+      div.querySelectorAll(".cit-vote-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const root = btn.closest(".cit-vote");
+          const pmid = root.dataset.pmid;
+          const title = root.dataset.title;
+          const vote = btn.dataset.vote;
+          root.querySelectorAll(".cit-vote-btn").forEach((b) => b.disabled = true);
+          try {
+            const r = await fetch(`${S.literatureBaseUrl}/citations/credible`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pmid, vote, title,
+                                      context: S.disease ? `${S.disease}/${S.targetCs || ""}` : "" }),
+            });
+            if (r.ok) {
+              const data = await r.json();
+              root.querySelector(".cit-up-count").textContent   = data.up   ?? "?";
+              root.querySelector(".cit-down-count").textContent = data.down ?? "?";
+              btn.classList.add("voted");
+            }
+          } catch (e) {
+            console.warn("vote failed", e);
+          } finally {
+            root.querySelectorAll(".cit-vote-btn").forEach((b) => b.disabled = false);
+          }
+        });
+      });
       return div;
     }
     // Always show first VISIBLE_DEFAULT; hide overflow inside <details>
