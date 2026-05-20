@@ -1015,13 +1015,12 @@
     // attach for fast sync layouts).
     setTimeout(() => {
       if (!S.cy) return;
-      // Compact the whole network into the right HALF of the viewport so the
-      // hub sits clearly on the right with empty space on the left.
-      // (Just panning the bbox center to 0.75w wasn't visible because the
-      //  bbox fills the entire viewport after a normal fit().)
-      const PADDING = 30;
-      const RIGHT_FRAC = 0.50;     // graph occupies right 50% of viewport
-      const CENTER_FRAC = 0.75;    // hub (bbox center) at 75% horizontal
+      // Place the bbox RIGHT EDGE flush with the right side of #cy area
+      // (= the boundary with #side panel) so the hub appears at the right
+      // edge of the visible graph viewport. Network expands to the left.
+      const PADDING = 30;             // outer padding for fit
+      const RIGHT_FRAC = 0.50;        // network occupies 50% of viewport width
+      const RIGHT_GAP = 10;           // gap between bbox right edge and viewport right
       const bb = S.cy.elements().boundingBox();
       const bbW = bb.x2 - bb.x1;
       const bbH = bb.y2 - bb.y1;
@@ -1034,16 +1033,18 @@
       );
       const bbCx = (bb.x1 + bb.x2) / 2;
       const bbCy = (bb.y1 + bb.y2) / 2;
+      const halfBBWidth = bbW * zoomFit / 2;
+      const hubRenderedX = w - RIGHT_GAP - halfBBWidth;   // hub center such that bb right = w - RIGHT_GAP
       S.cy.viewport({
         zoom: zoomFit,
         pan: {
-          x: w * CENTER_FRAC - bbCx * zoomFit,
+          x: hubRenderedX - bbCx * zoomFit,
           y: h * 0.5 - bbCy * zoomFit,
         },
       });
       S.baselineZoom = zoomFit;
       applyZoomSizing();
-      console.log(`[hub-pan] bb=(${bbW.toFixed(0)}x${bbH.toFixed(0)}) viewport=${w}x${h} zoom=${zoomFit.toFixed(3)} -> hub at renderedX=${(w * CENTER_FRAC).toFixed(0)}, graph width on screen=${(bbW * zoomFit).toFixed(0)}px`);
+      console.log(`[hub-pan] bb=(${bbW.toFixed(0)}x${bbH.toFixed(0)}) viewport=${w}x${h} zoom=${zoomFit.toFixed(3)} -> hub renderedX=${hubRenderedX.toFixed(0)} (${(hubRenderedX/w*100).toFixed(1)}%), bbox right edge=${(hubRenderedX + halfBBWidth).toFixed(0)} (target=${w - RIGHT_GAP})`);
     }, 0);
   }
 
