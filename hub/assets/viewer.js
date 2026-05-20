@@ -1008,6 +1008,28 @@
       wheelSensitivity: 0.2,
     });
     S.baselineZoom = S.cy.zoom();
+    // Pan the hub (highest-degree gene; fallback any node) to ~75% horizontal
+    // so the surrounding nodes have room on the left of the viewport.
+    {
+      let hubNode = null;
+      let maxDeg = -1;
+      S.cy.nodes('node[kind = "gene"]').forEach((n) => {
+        const d = n.degree();
+        if (d > maxDeg) { maxDeg = d; hubNode = n; }
+      });
+      if (!hubNode) {
+        S.cy.nodes().forEach((n) => {
+          const d = n.degree();
+          if (d > maxDeg) { maxDeg = d; hubNode = n; }
+        });
+      }
+      if (hubNode) {
+        const rp = hubNode.renderedPosition();
+        const w = S.cy.width();
+        const dx = (w * 0.75) - rp.x;
+        S.cy.panBy({ x: dx, y: 0 });
+      }
+    }
     wireCyHandlers();
     applyZoomSizing();
   }
