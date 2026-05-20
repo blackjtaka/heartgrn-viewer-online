@@ -2503,6 +2503,10 @@
       return;
     }
     try {
+      console.warn("[chat-done] data received",
+                   "msg.len=", (data.message || "").length,
+                   "n_actions=", (data.actions || []).length,
+                   "actions=", data.actions);
       const msg = data.message || (data._raw ? "(non-JSON response)" : "(empty)");
       const explicitActions = data.actions || [];
 
