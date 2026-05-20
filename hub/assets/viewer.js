@@ -1027,9 +1027,10 @@
       const zoom = S.cy.zoom();
       const cxRendered = cxGraph * zoom + pan.x;
       const w = S.cy.width();
-      const dx = (w * 0.75) - cxRendered;
+      const TARGET_FRAC = 0.90;   // 90% horizontal -> "hub at right edge"
+      const dx = (w * TARGET_FRAC) - cxRendered;
       S.cy.panBy({ x: dx, y: 0 });
-      console.log(`[hub-pan] bbCenter graph=(${cxGraph.toFixed(0)},${cyGraph.toFixed(0)}) rendered=(${cxRendered.toFixed(0)},?) viewportW=${w} dx=${dx.toFixed(0)} -> new renderedX=${(cxRendered + dx).toFixed(0)} (target=${(w * 0.75).toFixed(0)})`);
+      console.log(`[hub-pan] bbCenter graph=(${cxGraph.toFixed(0)},${cyGraph.toFixed(0)}) rendered=(${cxRendered.toFixed(0)},?) viewportW=${w} dx=${dx.toFixed(0)} -> new renderedX=${(cxRendered + dx).toFixed(0)} (target=${(w * TARGET_FRAC).toFixed(0)})`);
     }, 0);
   }
 
