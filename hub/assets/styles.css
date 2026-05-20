@@ -44,12 +44,10 @@ html, body {
 
 #app { display: grid; grid-template-columns: 360px 1fr; height: 100%; }
 #cy {
-  order: 2;       /* visually right column despite being first in HTML */
   background:
     radial-gradient(circle at 50% 42%, #ffffff 0%, #f7f8fa 55%, #eef2f7 100%);
 }
 #side {
-  order: 1;       /* visually left column despite being second in HTML */
   padding: 16px 18px; overflow-y: auto;
   font-size: 13px; line-height: 1.5;
   background: var(--bg); border-right: 1px solid var(--border);
