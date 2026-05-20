@@ -1863,14 +1863,20 @@ class LitHandler(BaseHTTPRequestHandler):
             graph_state = body.get("graph_state", {})
             history = body.get("history", []) or []
             use_websearch = bool(body.get("use_websearch", True))
-            # SSE headers
+            # SSE headers. Use Connection: close so the client reader sees
+            # a definitive end-of-stream when we return from this handler,
+            # instead of waiting for more data on a keep-alive socket and
+            # tripping the 120s AbortController on the frontend.
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self.send_header("X-Accel-Buffering", "no")
             self._set_cors()
             self.end_headers()
+            # Also signal to BaseHTTPRequestHandler that this connection
+            # must NOT be reused after this response.
+            self.close_connection = True
             try:
                 for event_name, payload in chat_with_agent_stream(
                         msg, graph_state, history,
