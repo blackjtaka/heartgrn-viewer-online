@@ -1720,20 +1720,30 @@
         }
         return wrap;
       };
-      const renderCrossPayloadHits = (sym, rows) => {
+      // Render cross-payload hits. Rows can come from multiple gene symbols
+      // (substring search), so each row carries its own .symbol field.
+      const renderCrossPayloadHits = (q, rows, nSymbols) => {
         if (!rows.length) return null;
         const wrap = document.createElement("div");
         const curDisease = S.diseaseId || "";
         const curCs = S.targetCs || "";
-        // Sort: current disease first, then by target_de_z desc.
+        // Re-rank client-side: exact symbol match first, then current disease, then DE-z.
+        const qU = q.toUpperCase();
         rows.sort((a, b) => {
+          const aExact = a.symbol === qU ? 0 : 1;
+          const bExact = b.symbol === qU ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
           const aCur = a.disease === curDisease ? 0 : 1;
           const bCur = b.disease === curDisease ? 0 : 1;
           if (aCur !== bCur) return aCur - bCur;
           return (b.target_de_z ?? -1e18) - (a.target_de_z ?? -1e18);
         });
-        wrap.innerHTML = `<div class="search-section">Other (disease × cell_state) hits (${rows.length})</div>`;
-        rows.slice(0, 10).forEach((r) => {
+        const label = nSymbols > 1
+          ? `Other (disease × cell_state) hits (${rows.length}, across ${nSymbols} symbols)`
+          : `Other (disease × cell_state) hits (${rows.length})`;
+        wrap.innerHTML = `<div class="search-section">${label}</div>`;
+        rows.slice(0, 12).forEach((r) => {
+          const sym = r.symbol;
           const role = (r.role || "").toLowerCase();           // "seed" / "tf"
           const dez = r.target_de_z != null ? Math.round(r.target_de_z) : "?";
           const isCur = (r.disease === curDisease && r.cs === curCs);
@@ -1743,15 +1753,12 @@
                        + ` <span class="meta">${escapeHtml(r.cs || "")} · DE-z ${dez}</span>`;
           row.addEventListener("click", async () => {
             gs.value = sym; gsRes.innerHTML = "";
-            // Switch disease then target_cs, then highlight when the new
-            // payload is rendered.
             if (r.disease && r.disease !== S.diseaseId) {
               await selectDisease(r.disease);
             }
             if (r.cs && r.cs !== S.targetCs) {
               await selectTargetCs(r.cs);
             }
-            // Try to focus the gene on the new graph.
             setTimeout(() => {
               if (!S.cy) return;
               const n = S.cy.getElementById(sym);
@@ -1760,10 +1767,10 @@
           });
           wrap.appendChild(row);
         });
-        if (rows.length > 10) {
+        if (rows.length > 12) {
           const more = document.createElement("div");
           more.className = "meta"; more.style.padding = "2px 0";
-          more.textContent = `(+${rows.length - 10} more across payloads)`;
+          more.textContent = `(+${rows.length - 12} more across payloads)`;
           wrap.appendChild(more);
         }
         return wrap;
@@ -1778,27 +1785,29 @@
         const local = S.cy.nodes().filter((n) => n.id().toLowerCase().includes(q.toLowerCase()));
         const localEl = renderLocalMatches(q, local);
         if (localEl) gsRes.appendChild(localEl);
-        // Cross-payload lookup — debounced 350ms + min-length 3 to avoid
-        // hammering the backend with prefix probes (TB / TBX / TBX5 / ...).
-        if (q.length < 3) return;
+        // Cross-payload substring search via /gene/search/<q>. Debounced
+        // 300ms; accepts any 2+ letter alphanumeric (so 'TBX' matches
+        // TBX5/TBX18/TBX20 as a substring).
+        if (q.length < 2) return;
         const sym = q.toUpperCase();
-        if (!/^[A-Z][A-Z0-9-]{2,}$/.test(sym)) return;
+        if (!/^[A-Z][A-Z0-9-]{1,}$/.test(sym)) return;
         xpTimer = setTimeout(async () => {
           const seq = ++xpSeq;
           try {
-            const resp = await fetch(`${S.literatureBaseUrl}/gene/lookup/${encodeURIComponent(sym)}`);
+            const resp = await fetch(`${S.literatureBaseUrl}/gene/search/${encodeURIComponent(sym)}`);
             if (seq !== xpSeq) return;
             if (resp.ok) {
               const data = await resp.json();
-              const rows = data.top || [];
-              const xpEl = renderCrossPayloadHits(sym, rows);
+              const rows = data.matches || [];
+              const nSyms = data.n_symbols || 0;
+              const xpEl = renderCrossPayloadHits(sym, rows, nSyms);
               if (xpEl) gsRes.appendChild(xpEl);
               else if (!localEl) {
                 gsRes.innerHTML = '<div class="meta" style="padding:3px 0">no hits in current view or cross-payload index</div>';
               }
             }
           } catch (_) {}
-        }, 350);
+        }, 300);
       });
       gs.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {

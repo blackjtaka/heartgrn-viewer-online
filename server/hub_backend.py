@@ -1645,6 +1645,29 @@ class LitHandler(BaseHTTPRequestHandler):
                               "top": rows_sorted[:20],
                               "n_uniq_gene_symbols": len(idx.get("by_gene") or {})});
             return
+        # /gene/search/<q> — case-insensitive substring search across all
+        # gene symbols in the cross-payload index. Returns flat hits, each
+        # tagged with its symbol so the frontend can render a single list.
+        m = re.fullmatch(r"/gene/search/(.+)", path)
+        if m:
+            q = m.group(1).upper()
+            idx = get_snp_index(self.hub_dir)
+            by_gene = idx.get("by_gene") or {}
+            # Match shorter symbols first (more likely the exact intent),
+            # cap symbol count to avoid giant payloads.
+            syms = [s for s in by_gene if q in s.upper()]
+            syms.sort(key=lambda s: (0 if s.upper() == q else 1, len(s), s))
+            flat = []
+            for sym in syms[:30]:
+                for r in by_gene[sym][:8]:
+                    flat.append({**r, "symbol": sym})
+            # Rank: exact symbol match first, then by target_de_z desc.
+            flat.sort(key=lambda r: (0 if r["symbol"].upper() == q else 1,
+                                       -(r.get("target_de_z") or -1e18)))
+            self._json(200, {"q": q,
+                              "n_symbols": len(syms),
+                              "matches": flat[:40]})
+            return
         if path == "/literature/list":
             entries = []
             for t in ALLOWED_TYPES:
