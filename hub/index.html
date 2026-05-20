@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779283965">
+<link rel="stylesheet" href="assets/styles.css?v=1779284502">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -251,6 +251,13 @@
       <label>FDR threshold</label>
       <input id="fdr-input" type="number" min="0.001" max="0.5" step="0.01" value="0.10">
     </div>
+    <div class="spec-legend">
+      <div class="spec-legend-title">Specificity legend (node border color)</div>
+      <div class="spec-legend-row"><span class="spec-sw spec-sw-both"></span><span><b>black</b> — significant vs <em>all</em> other cell_states <em>AND</em> vs the selected reference (strongest)</span></div>
+      <div class="spec-legend-row"><span class="spec-sw spec-sw-all"></span><span><b>cyan</b> — significant vs all other cell_states only</span></div>
+      <div class="spec-legend-row"><span class="spec-sw spec-sw-ref"></span><span><b>green</b> — significant vs the selected reference only</span></div>
+      <div class="spec-legend-row"><span class="spec-sw spec-sw-none"></span><span><b>grey</b> — not significantly specific</span></div>
+    </div>
 
     <h2>Edge highlight</h2>
     <div class="control">
@@ -372,7 +379,7 @@
   <div class="chat-meta" id="chat-meta"></div>
 </div>
 
-<script src="assets/specificity.js?v=1779283965"></script>
-<script src="assets/viewer.js?v=1779283965"></script>
+<script src="assets/specificity.js?v=1779284502"></script>
+<script src="assets/viewer.js?v=1779284502"></script>
 </body>
 </html>

@@ -1261,11 +1261,22 @@
     if (_detailPanel) _detailPanel.style.display = "none";
   }
 
+  // Human-readable label for the specificity category. Pairs with the
+  // colored node border shown on the cytoscape graph (see specBorder()).
+  function specLabel(cat) {
+    return {
+      both:     "significant vs all + reference",
+      all_only: "significant vs all other cell_states",
+      ref_only: "significant vs selected reference",
+      neither:  "not significantly specific",
+    }[cat] || cat;
+  }
+
   function buildDetailHtml(n) {
     const d = n.data();
     const kind = d.kind;
     const cat = d.cat || "neither";
-    let html = `<div class="tt-sub">${kind.toUpperCase()} • <span class="tt-tag tt-tag-${cat}">${cat}</span></div>`;
+    let html = `<div class="tt-sub">${kind.toUpperCase()} • Specificity: <span class="tt-tag tt-tag-${cat}">${specLabel(cat)}</span></div>`;
     if (d.gwas_z !== undefined) html += `<div class="tt-row"><b>GWAS-z</b> ${fmt(d.gwas_z)}</div>`;
     if (d.de_z !== undefined) html += `<div class="tt-row"><b>${S.targetCs} DE-z</b> ${fmt(d.de_z)}</div>`;
     if (d.chr) html += `<div class="tt-row"><b>chr</b> ${d.chr}${d.pos ? ":" + d.pos : ""}</div>`;

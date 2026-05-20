@@ -170,6 +170,45 @@ button:active { transform: translateY(0.5px); }
 .tt-tag-ref_only { background: #d1fae5; color: #047857; }
 .tt-tag-neither  { background: var(--bg-subtle); color: var(--muted); }
 
+/* Specificity legend in the side panel */
+.spec-legend {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.spec-legend-title {
+  font-weight: 600;
+  margin-bottom: 5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+.spec-legend-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 3px 0;
+}
+.spec-sw {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 1px;
+  border: 3px solid;
+  background: #fff;
+}
+.spec-sw-both { border-color: #0f172a; }
+.spec-sw-all  { border-color: #0ea5e9; }
+.spec-sw-ref  { border-color: #047857; }
+.spec-sw-none { border-color: #a8a29e; }
+
 .tt-snps { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
 .tt-snp-card {
   padding: 8px 10px; margin: 6px 0;
