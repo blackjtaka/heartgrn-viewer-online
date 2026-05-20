@@ -1793,7 +1793,12 @@ class LitHandler(BaseHTTPRequestHandler):
             req_origin = self.headers.get("Origin", "").strip()
             if ALLOWED_ORIGINS and os.environ.get("ALLOW_ANY_ORIGIN") != "1":
                 if not req_origin or req_origin not in ALLOWED_ORIGINS:
-                    self._json(403, {"error": "forbidden_origin"}); return
+                    log.warning("chat-stream blocked: origin=%r not in ALLOWED_ORIGINS=%r",
+                                req_origin, ALLOWED_ORIGINS)
+                    self._json(403, {"error": "forbidden_origin",
+                                      "got_origin": req_origin,
+                                      "allowed": list(ALLOWED_ORIGINS)})
+                    return
             client_ip = (self.headers.get("CF-Connecting-IP")
                          or (self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or None)
                          or self.client_address[0])
