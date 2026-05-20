@@ -80,14 +80,34 @@
 
   // ---------- DOM helpers ----------
   const $ = (id) => document.getElementById(id);
-  const banner = (msg, hideAfterMs) => {
+  // banner(msg, hideAfterMs, progress)
+  //   progress: number 0..1 -> determinate bar at that fraction
+  //             "indeterminate" -> animated sweep bar
+  //             undefined/null  -> no bar (text only)
+  const banner = (msg, hideAfterMs, progress) => {
     let b = $("status-banner");
     if (!b) {
       b = document.createElement("div");
       b.id = "status-banner";
+      b.innerHTML = '<div class="msg"></div><div class="progress" style="display:none"><span class="bar"></span></div>';
       document.body.appendChild(b);
     }
-    b.textContent = msg;
+    const msgEl = b.querySelector(".msg");
+    const progEl = b.querySelector(".progress");
+    const barEl = progEl.querySelector(".bar");
+    msgEl.textContent = msg || "";
+    if (progress === "indeterminate") {
+      progEl.style.display = "";
+      progEl.classList.add("indeterminate");
+      barEl.style.width = "";
+    } else if (typeof progress === "number") {
+      progEl.style.display = "";
+      progEl.classList.remove("indeterminate");
+      barEl.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
+    } else {
+      progEl.style.display = "none";
+      progEl.classList.remove("indeterminate");
+    }
     b.style.display = msg ? "block" : "none";
     if (msg && hideAfterMs) setTimeout(() => { b.style.display = "none"; }, hideAfterMs);
   };
@@ -306,14 +326,14 @@
     // Load DE-z asset (cached)
     if (!S.deZCache.has(id)) {
       const file = S.manifest.diseases[id].de_z_file;
-      banner(`Fetching DE-z matrix for ${id}…`);
+      banner(`Loading DE-z matrix for ${id}…`, null, "indeterminate");
       console.time("fetch deZ");
       const asset = file.endsWith(".gz") ? await fetchGzJson(file) : await fetchJson(file);
       console.timeEnd("fetch deZ");
 
       const nGenes = asset.genes.length;
       const nCs = asset.cs.length;
-      banner(`Indexing ${nGenes.toLocaleString()} × ${nCs} DE-z matrix…`);
+      banner(`Loading: indexing ${nGenes.toLocaleString()} × ${nCs} DE-z matrix…`, null, 0);
 
       // Build flat Float32Array in chunks so the spinner can paint.
       console.time("build deZ flat");
@@ -327,6 +347,7 @@
           for (let j = 0; j < nCs; j++) flat[r * nCs + j] = row[j];
         }
         i = end;
+        banner(`Loading: indexing ${nGenes.toLocaleString()} × ${nCs} DE-z matrix…`, null, i / nGenes);
         if (i < nGenes) await new Promise((res) => setTimeout(res, 0));   // yield
       }
       console.timeEnd("build deZ flat");

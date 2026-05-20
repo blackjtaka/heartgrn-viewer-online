@@ -321,11 +321,48 @@ code {
 .detail-body { padding: 10px 14px; max-height: 60vh; overflow-y: auto; }
 
 #status-banner {
-  position: absolute; top: 12px; left: 12px;
-  padding: 6px 12px; background: rgba(31, 41, 51, 0.92);
-  color: #fff; border-radius: var(--radius-sm);
-  font-size: 11.5px; z-index: 10003; display: none;
-  box-shadow: var(--shadow-md);
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 9px 16px 10px;
+  background: rgba(31, 41, 51, 0.92);
+  color: #fff;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  z-index: 10003;
+  display: none;
+  box-shadow: var(--shadow-lg);
+  min-width: 300px;
+  max-width: 480px;
+  text-align: center;
+  pointer-events: none;
+}
+#status-banner .msg { line-height: 1.35; }
+#status-banner .progress {
+  margin-top: 7px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#status-banner .progress > .bar {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #60a5fa, #a78bfa);
+  border-radius: 2px;
+  transition: width 220ms cubic-bezier(0.25, 0.8, 0.4, 1);
+}
+#status-banner .progress.indeterminate > .bar {
+  width: 35%;
+  animation: status-banner-indeterm 1.2s linear infinite;
+  transition: none;
+}
+@keyframes status-banner-indeterm {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(380%); }
 }
 
 /* --- chat panel --- */
