@@ -135,15 +135,28 @@
   // ---------- SSE streaming helper for /chat/stream ----------
   // Parses Server-Sent Events from the response body, calls onUpdate(text)
   // for each new partial message, and resolves with the final 'done' payload.
-  // Throws an object with {status, body?, errorPayload?} on HTTP / SSE error.
+  // Aborts after 120s; throws {status, body?, errorPayload?, aborted?} on
+  // HTTP / SSE error / timeout.
   async function fetchChatStreaming(url, options, onUpdate) {
-    const resp = await fetch(url, options);
+    const ac = new AbortController();
+    const timeoutId = setTimeout(() => ac.abort(), 120_000);
+    let resp;
+    try {
+      resp = await fetch(url, { ...options, signal: ac.signal });
+    } catch (e) {
+      clearTimeout(timeoutId);
+      throw { status: 0, aborted: ac.signal.aborted, body: e.message };
+    }
     if (!resp.ok) {
+      clearTimeout(timeoutId);
       let body = null;
       try { body = await resp.json(); } catch { try { body = await resp.text(); } catch {} }
       throw { status: resp.status, body };
     }
-    if (!resp.body) throw { status: 0, body: "stream not supported (no resp.body)" };
+    if (!resp.body) {
+      clearTimeout(timeoutId);
+      throw { status: 0, body: "stream not supported (no resp.body)" };
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buf = "";
@@ -152,7 +165,13 @@
     let errorPayload = null;
     let lastShown = "";
     while (true) {
-      const { value, done } = await reader.read();
+      let read;
+      try { read = await reader.read(); }
+      catch (e) {
+        clearTimeout(timeoutId);
+        throw { status: 0, aborted: ac.signal.aborted, body: e.message };
+      }
+      const { value, done } = read;
       if (done) break;
       buf += decoder.decode(value, { stream: true });
       // SSE events end with double-LF
@@ -183,7 +202,12 @@
         }
       }
     }
+    clearTimeout(timeoutId);
     if (errorPayload) throw { status: 0, errorPayload };
+    if (final === null) {
+      console.warn("[chat-stream] stream ended without 'done' event; raw tail=",
+                   raw.slice(-200));
+    }
     return final;
   }
 
