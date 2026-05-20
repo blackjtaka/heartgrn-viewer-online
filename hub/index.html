@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>HeartGRN Viewer — interactive cardiac GWAS-eGRN explorer</title>
+<title>CardioNavigator — interactive cardiac GWAS-eGRN explorer</title>
 <meta name="robots" content="noindex,nofollow">
 <!-- Runtime configuration. Edit assets/config.js to change API_BASE and access password. -->
 <script src="assets/config.js"></script>
@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779280398">
+<link rel="stylesheet" href="assets/styles.css?v=1779280601">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -60,8 +60,8 @@
 <!-- ===== Password gate (staging) ===== -->
 <div id="pass-gate" class="gate-overlay" style="display:none">
   <div class="gate-card">
-    <h2>HeartGRN Viewer — staging</h2>
-    <p>This is a staging preview of the viewer that accompanies the snp2cell cardiac GWAS-eGRN analysis. It is not yet public.</p>
+    <h2>CardioNavigator — staging</h2>
+    <p>This is a staging preview of the cardiac GWAS-eGRN explorer. It is not yet public.</p>
     <p>If you have an access password, enter it below.</p>
     <div class="row">
       <input id="pass-input" type="password" autocomplete="off" placeholder="Access password">
@@ -192,8 +192,7 @@
 <div id="app">
   <div id="cy"></div>
   <div id="side">
-    <h1 id="title-label">snp2cell hub</h1>
-    <div class="meta" id="meta-line">Loading manifest…</div>
+    <h1 id="title-label">CardioNavigator</h1>
 
     <h2>Selection</h2>
     <div class="control">
@@ -370,7 +369,7 @@
   <div class="chat-meta" id="chat-meta"></div>
 </div>
 
-<script src="assets/specificity.js?v=1779280398"></script>
-<script src="assets/viewer.js?v=1779280398"></script>
+<script src="assets/specificity.js?v=1779280601"></script>
+<script src="assets/viewer.js?v=1779280601"></script>
 </body>
 </html>
