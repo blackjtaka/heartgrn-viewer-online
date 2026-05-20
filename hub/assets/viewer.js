@@ -2853,17 +2853,16 @@
         added per variant as the catalog grows.
       </div>`;
     }
-    const btns = figs.map((f) => {
-      const label = `${f.cell_state} · ${(f.window / 1000).toFixed(0)} kb`;
-      return `<button class="ag1-figure-btn" data-png="${f.png_url}" data-label="${label}">
-        ${label}
-      </button>`;
-    }).join("");
-    return `<div class="meta" style="margin:6px 0">
-      ${figs.length} pre-rendered track${figs.length === 1 ? "" : "s"} available
-      (click to view):
-    </div>
-    <div class="ag1-figure-btn-row">${btns}</div>`;
+    // Show only the first available figure as a representative track.
+    // (Some variants have multiple cell_state × window combos in cache; the
+    //  rest are reachable directly from the file system / repo if needed.)
+    const f = figs[0];
+    const label = `${f.cell_state} · ${(f.window / 1000).toFixed(0)} kb`;
+    const extra = figs.length > 1 ? ` <span class="meta">(+${figs.length - 1} more in cache)</span>` : "";
+    return `<div class="meta" style="margin:6px 0">Pre-rendered REF/ALT/Δ track${extra}:</div>
+      <div class="ag1-figure-btn-row">
+        <button class="ag1-figure-btn" data-png="${f.png_url}" data-label="${label}">${label}</button>
+      </div>`;
   }
 
   // ---------- bootstrap ----------
