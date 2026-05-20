@@ -1594,6 +1594,18 @@ class LitHandler(BaseHTTPRequestHandler):
 
         # /chat: interactive Ask Agent (BYOK — user supplies X-API-Key header)
         if path == "/chat":
+            # CSRF defense: Origin header must match ALLOWED_ORIGINS.
+            # Browsers always send Origin on cross-origin POST; same-origin
+            # also fine. Curl / scripts without Origin are blocked unless
+            # ALLOW_ANY_ORIGIN=1 is set (e.g. for testing).
+            req_origin = self.headers.get("Origin", "").strip()
+            if ALLOWED_ORIGINS and os.environ.get("ALLOW_ANY_ORIGIN") != "1":
+                if not req_origin or req_origin not in ALLOWED_ORIGINS:
+                    log.warning("chat blocked: origin=%r not in ALLOWED_ORIGINS=%r",
+                                req_origin, ALLOWED_ORIGINS)
+                    self._json(403, {"error": "forbidden_origin",
+                                     "message": "Origin header missing or not allowed"})
+                    return
             # Per-IP rate limit. Cloudflare forwards the real client IP via CF-Connecting-IP;
             # respect X-Forwarded-For as a fallback, otherwise use the socket peer.
             client_ip = (self.headers.get("CF-Connecting-IP")
