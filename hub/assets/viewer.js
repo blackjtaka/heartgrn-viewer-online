@@ -2379,6 +2379,7 @@
       S.chatPending = false; $("chat-send").disabled = false;
       return;
     }
+    try {
       const msg = data.message || (data._raw ? "(non-JSON response)" : "(empty)");
       const explicitActions = data.actions || [];
 
