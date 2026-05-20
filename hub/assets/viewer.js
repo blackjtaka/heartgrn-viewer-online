@@ -1768,21 +1768,26 @@
         }
         return wrap;
       };
-      gs.addEventListener("input", async (e) => {
+      let xpTimer = null;
+      gs.addEventListener("input", (e) => {
         const q = e.target.value.trim();
         gsRes.innerHTML = "";
+        if (xpTimer) { clearTimeout(xpTimer); xpTimer = null; }
         if (!q || q.length < 2 || !S.cy) return;
-        // Local cy match.
+        // Local cy match — instant.
         const local = S.cy.nodes().filter((n) => n.id().toLowerCase().includes(q.toLowerCase()));
         const localEl = renderLocalMatches(q, local);
         if (localEl) gsRes.appendChild(localEl);
-        // Cross-payload (exact symbol — most useful for genes/TFs).
+        // Cross-payload lookup — debounced 350ms + min-length 3 to avoid
+        // hammering the backend with prefix probes (TB / TBX / TBX5 / ...).
+        if (q.length < 3) return;
         const sym = q.toUpperCase();
-        if (/^[A-Z][A-Z0-9-]{1,}$/.test(sym)) {
+        if (!/^[A-Z][A-Z0-9-]{2,}$/.test(sym)) return;
+        xpTimer = setTimeout(async () => {
           const seq = ++xpSeq;
           try {
             const resp = await fetch(`${S.literatureBaseUrl}/gene/lookup/${encodeURIComponent(sym)}`);
-            if (seq !== xpSeq) return;            // newer query started, discard
+            if (seq !== xpSeq) return;
             if (resp.ok) {
               const data = await resp.json();
               const rows = data.top || [];
@@ -1793,9 +1798,7 @@
               }
             }
           } catch (_) {}
-        } else if (!localEl) {
-          gsRes.innerHTML = '<div class="meta" style="padding:3px 0">no matches in current view (use full gene symbol for cross-payload search)</div>';
-        }
+        }, 350);
       });
       gs.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
