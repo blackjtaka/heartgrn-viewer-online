@@ -303,12 +303,17 @@ def _call_anthropic_sdk(prompt: str, *, api_key: str,
     client = Anthropic(api_key=api_key, timeout=timeout)
     tools = []
     if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
+        # Tool-use round-trips re-send the full prompt + accumulated
+        # tool_use/tool_result blocks each turn, which compounds against
+        # the org's per-minute input-token cap (30k/min on Anthropic
+        # Tier 1). Keep budgets tight: ~5 searches + 8 fetches = enough
+        # for per-claim citation + verification without blowing 30k/min.
         tools.append({"type": "web_search_20250305",
                       "name": "web_search",
-                      "max_uses": 15})
+                      "max_uses": 5})
         tools.append({"type": "web_fetch_20250910",
                       "name": "web_fetch",
-                      "max_uses": 15})
+                      "max_uses": 8})
 
     try:
         resp = client.messages.create(
@@ -395,23 +400,40 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
     """Yield text chunks from the LLM streaming endpoint. Dispatch by key prefix."""
     if api_key and api_key.startswith("sk-ant-"):
         try:
-            from anthropic import Anthropic
+            from anthropic import Anthropic, RateLimitError, AuthenticationError, APIError
         except ImportError:
             raise AgentError("anthropic SDK not installed")
         client = Anthropic(api_key=api_key, timeout=timeout)
         tools = []
         if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 15})
-            tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 15})
-        with client.messages.stream(
-            model=model or "claude-sonnet-4-6",
-            max_tokens=max_tokens,
-            tools=tools or [],
-            messages=[{"role": "user", "content": prompt}],
-        ) as stream:
-            for text in stream.text_stream:
-                if text:
-                    yield text
+            # Same budget as non-streaming path; multi-turn tool use
+            # compounds against per-minute input-token caps. See
+            # _call_anthropic_sdk for the reasoning.
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
+            tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 8})
+        try:
+            with client.messages.stream(
+                model=model or "claude-sonnet-4-6",
+                max_tokens=max_tokens,
+                tools=tools or [],
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    if text:
+                        yield text
+        except RateLimitError as e:
+            # Map the per-minute input-token cap (30k/min on Tier 1) to a
+            # user-friendly hint that suggests waiting or switching key.
+            raise AgentError(
+                "anthropic rate-limited (your Anthropic key hit its per-minute "
+                "input-token cap, typically 30,000/min on Tier 1). "
+                "Wait ~60s and retry, upgrade the Anthropic plan, or switch "
+                f"to a Gemini key in the BYOK panel. Raw: {e}"
+            )
+        except AuthenticationError as e:
+            raise AgentError(f"anthropic auth failed (check your API key): {e}")
+        except APIError as e:
+            raise AgentError(f"anthropic API error: {e}")
     else:
         try:
             from google import genai

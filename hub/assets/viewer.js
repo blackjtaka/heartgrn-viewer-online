@@ -2513,8 +2513,14 @@
       } else if (err.status === 429) {
         appendChatMessage("system", "⏳ Rate-limited. Wait a minute and try again.");
       } else if (err.errorPayload) {
-        appendChatMessage("system",
-          `Error: ${err.errorPayload.detail || err.errorPayload.error || "stream failed"}`);
+        if (err.errorPayload.error === "rate_limited") {
+          appendChatMessage("system",
+            `⏳ Rate-limited. Your Anthropic key hit its per-minute input-token cap (typically 30,000/min on Tier 1). `
+            + `Wait ~60s and retry, upgrade the Anthropic plan, or switch to a Gemini key in the 🔑 BYOK panel.`);
+        } else {
+          appendChatMessage("system",
+            `Error: ${err.errorPayload.detail || err.errorPayload.error || "stream failed"}`);
+        }
       } else {
         const txt = err.body ? (typeof err.body === "string" ? err.body : JSON.stringify(err.body)) : String(err);
         appendChatMessage("system", `Error ${err.status || ""}: ${txt.slice(0, 200)}`);
