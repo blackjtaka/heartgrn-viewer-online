@@ -721,9 +721,24 @@ retrieved deterministically before you ran). The new rule for `message`:
     the final "Citations" panel below the message.
   * In the JSON `citations` field, include one entry per UNIQUE PMID
     you cited, each with `pmid`, `key_finding` (one-line takeaway).
-  * **If VERIFIED_CITATIONS is empty** (or no entries cover a specific
-    claim), DROP that claim or rephrase it as a hypothesis ("It is
-    plausible that ...") with no PMID. Do NOT cite from training data.
+  * **If VERIFIED_CITATIONS is empty** OR no entry covers a specific
+    claim, **YOU MUST actively use WebSearch / google_search (up to
+    5 calls)** to find real PubMed PMIDs for the user's question.
+    Put those PMIDs inline in the `message` AND in the JSON
+    `citations` field — the backend will re-verify each one via NCBI
+    esummary. Verified-but-off-grounding hits get an orange tag in
+    the UI (positive signal: you found something the deterministic
+    NCBI prefetch missed). Hallucinated/unreachable PMIDs get
+    flagged red.
+  * **FORBIDDEN FALLBACK**: Do NOT tell the user "search PubMed
+    yourself"; do NOT paste a `pubmed.ncbi.nlm.nih.gov/?term=...`
+    URL; do NOT say "VERIFIED_CITATIONS is empty so no papers can be
+    cited". Those are punts. The user has explicitly said the agent
+    should do the PubMed search and return verified PMIDs. Only if
+    WebSearch ALSO returns nothing relevant may you phrase a claim
+    as a hypothesis — and you must say so explicitly ("WebSearch
+    returned no directly supporting paper; hypothesis only").
+  * Do NOT cite from training data without WebSearch confirmation.
 
 The graph_state JSON contains the COMPLETE current subgraph:
   • seed_genes — outer ring, full list with chr / gwas_z / target_de_z / specificity

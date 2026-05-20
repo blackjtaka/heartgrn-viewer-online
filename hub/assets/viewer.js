@@ -2469,12 +2469,11 @@
           message,
           graph_state: buildGraphState(),
           history: S.chatHistory.slice(-10),
-          // Disable Gemini's google_search / Anthropic's web_search tool by
-          // default — NCBI grounding (server-side prefetch) already provides
-          // verified citations and the search tool was a frequent source of
-          // mid-stream hangs (especially on Gemini high-demand windows).
-          // The user can opt back in by setting localStorage.hub_websearch = "1".
-          use_websearch: (localStorage.getItem("hub_websearch") === "1"),
+          // WebSearch is ON by default. When the deterministic NCBI prefetch
+          // returns no VERIFIED_CITATIONS for a query, the agent is required
+          // (by CHAT_SYSTEM_PROMPT) to actively search PubMed itself rather
+          // than punt to the user. Opt out: localStorage.hub_websearch = "0".
+          use_websearch: (localStorage.getItem("hub_websearch") !== "0"),
         }),
       }, (partialText) => {
         // Live-update the thinking bubble with streamed message text.
