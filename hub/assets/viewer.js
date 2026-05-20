@@ -1010,42 +1010,6 @@
     S.baselineZoom = S.cy.zoom();
     wireCyHandlers();
     applyZoomSizing();
-    // Defer with setTimeout to ensure cytoscape's preset layout + fit have
-    // fully settled (layoutstop may already have fired before .one() could
-    // attach for fast sync layouts).
-    setTimeout(() => {
-      if (!S.cy) return;
-      // Place the bbox RIGHT EDGE flush with the right side of #cy area
-      // (= the boundary with #side panel) so the hub appears at the right
-      // edge of the visible graph viewport. Network expands to the left.
-      const PADDING = 30;             // outer padding for fit
-      const RIGHT_FRAC = 0.50;        // network occupies 50% of viewport width
-      const RIGHT_GAP = 10;           // gap between bbox right edge and viewport right
-      const bb = S.cy.elements().boundingBox();
-      const bbW = bb.x2 - bb.x1;
-      const bbH = bb.y2 - bb.y1;
-      const w = S.cy.width();
-      const h = S.cy.height();
-      if (bbW <= 0 || bbH <= 0) return;
-      const zoomFit = Math.min(
-        (w * RIGHT_FRAC - 2 * PADDING) / bbW,
-        (h - 2 * PADDING) / bbH,
-      );
-      const bbCx = (bb.x1 + bb.x2) / 2;
-      const bbCy = (bb.y1 + bb.y2) / 2;
-      const halfBBWidth = bbW * zoomFit / 2;
-      const hubRenderedX = w - RIGHT_GAP - halfBBWidth;   // hub center such that bb right = w - RIGHT_GAP
-      S.cy.viewport({
-        zoom: zoomFit,
-        pan: {
-          x: hubRenderedX - bbCx * zoomFit,
-          y: h * 0.5 - bbCy * zoomFit,
-        },
-      });
-      S.baselineZoom = zoomFit;
-      applyZoomSizing();
-      console.log(`[hub-pan] bb=(${bbW.toFixed(0)}x${bbH.toFixed(0)}) viewport=${w}x${h} zoom=${zoomFit.toFixed(3)} -> hub renderedX=${hubRenderedX.toFixed(0)} (${(hubRenderedX/w*100).toFixed(1)}%), bbox right edge=${(hubRenderedX + halfBBWidth).toFixed(0)} (target=${w - RIGHT_GAP})`);
-    }, 0);
   }
 
   function applyZoomSizing() {
