@@ -1010,11 +1010,13 @@
     S.baselineZoom = S.cy.zoom();
     wireCyHandlers();
     applyZoomSizing();
-    // Pan the hub (= the node closest to the graph origin, which is where
-    // concentric_egrn.py anchors the central seed) to ~75% horizontal so the
-    // radial neighborhood spreads into the empty left half of the viewport.
-    // Use layoutstop so we measure rendered positions AFTER cy fits.
-    S.cy.one("layoutstop", () => {
+    // Defer with setTimeout to ensure cytoscape's preset layout + fit have
+    // fully settled (layoutstop may already have fired before .one() could
+    // attach for fast sync layouts).
+    setTimeout(() => {
+      if (!S.cy) return;
+      // Re-fit to be safe, then move the concentric center to ~75% horizontal.
+      S.cy.fit(undefined, 30);
       let hubNode = null;
       let minDistSq = Infinity;
       S.cy.nodes('node[kind = "gene"]').forEach((n) => {
@@ -1029,16 +1031,16 @@
           if (dsq < minDistSq) { minDistSq = dsq; hubNode = n; }
         });
       }
-      if (hubNode) {
-        const rp = hubNode.renderedPosition();
-        const w = S.cy.width();
-        const dx = (w * 0.75) - rp.x;
-        S.cy.panBy({ x: dx, y: 0 });
-        console.log(`[hub-pan] hub=${hubNode.id()} graphPos=(${hubNode.position().x.toFixed(0)},${hubNode.position().y.toFixed(0)}) renderedX=${rp.x.toFixed(0)} viewportW=${w} dx=${dx.toFixed(0)}`);
-      } else {
-        console.log("[hub-pan] no node found");
+      if (!hubNode) {
+        console.log("[hub-pan] no node found, skipping");
+        return;
       }
-    });
+      const rp = hubNode.renderedPosition();
+      const w = S.cy.width();
+      const dx = (w * 0.75) - rp.x;
+      S.cy.panBy({ x: dx, y: 0 });
+      console.log(`[hub-pan] hub=${hubNode.id()} kind=${hubNode.data("kind")} graphPos=(${hubNode.position().x.toFixed(0)},${hubNode.position().y.toFixed(0)}) renderedX=${rp.x.toFixed(0)} viewportW=${w} dx=${dx.toFixed(0)} -> new renderedX=${(rp.x + dx).toFixed(0)}`);
+    }, 0);
   }
 
   function applyZoomSizing() {
