@@ -233,6 +233,19 @@ button:active { transform: translateY(0.5px); }
 .cit-vote-btn:disabled { opacity: 0.5; cursor: wait; }
 .cit-vote-up.voted   { background: #d1fae5; color: #047857; border-color: #6ee7b7; }
 .cit-vote-down.voted { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+.cit-up-count, .cit-down-count {
+  display: inline-block;
+  min-width: 1.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.count-flash {
+  animation: count-flash 600ms ease-out;
+}
+@keyframes count-flash {
+  0%   { background: #fef08a; transform: scale(1.25); }
+  100% { background: transparent; transform: scale(1.0); }
+}
 
 /* Graph search results dropdown */
 .search-results {

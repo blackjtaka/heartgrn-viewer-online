@@ -2315,14 +2315,36 @@
               body: JSON.stringify({ pmid, vote, title,
                                       context: S.disease ? `${S.disease}/${S.targetCs || ""}` : "" }),
             });
-            if (r.ok) {
-              const data = await r.json();
-              root.querySelector(".cit-up-count").textContent   = data.up   ?? "?";
-              root.querySelector(".cit-down-count").textContent = data.down ?? "?";
+            const data = await r.json().catch(() => null);
+            console.log("[citation-vote]", { pmid, vote, status: r.status, data });
+            if (r.ok && data && (typeof data.up === "number" || typeof data.down === "number")) {
+              const upEl = root.querySelector(".cit-up-count");
+              const dnEl = root.querySelector(".cit-down-count");
+              const oldUp = upEl ? upEl.textContent : "";
+              const oldDn = dnEl ? dnEl.textContent : "";
+              if (upEl) upEl.textContent = data.up   ?? 0;
+              if (dnEl) dnEl.textContent = data.down ?? 0;
               btn.classList.add("voted");
+              // Flash so the user sees something happen even when the
+              // count value is unchanged (same-user repeat vote).
+              const tgt = (vote === "up") ? upEl : dnEl;
+              if (tgt) {
+                tgt.classList.remove("count-flash");
+                void tgt.offsetWidth; // force reflow to restart animation
+                tgt.classList.add("count-flash");
+              }
+              // If the displayed numbers didn't actually change, log it
+              // so we can tell same-IP repeat vs backend-not-updating.
+              if (upEl && oldUp === upEl.textContent && dnEl && oldDn === dnEl.textContent) {
+                console.log("[citation-vote] counts unchanged (same-IP repeat or backend stale)");
+              }
+            } else {
+              console.warn("[citation-vote] failed", { status: r.status, data });
+              alert(`Vote failed: ${(data && (data.error || data.message)) || r.statusText || r.status}`);
             }
           } catch (e) {
-            console.warn("vote failed", e);
+            console.warn("[citation-vote] network error", e);
+            alert(`Vote failed (network): ${e.message || e}`);
           } finally {
             root.querySelectorAll(".cit-vote-btn").forEach((b) => b.disabled = false);
           }
