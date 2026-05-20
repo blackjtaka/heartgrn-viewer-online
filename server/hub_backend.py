@@ -1345,12 +1345,10 @@ def chat_with_agent(message: str, graph_state: dict, history: list,
     ctx = {"disease": disease_id, "cs": graph_state.get("target_cs", ""),
            "genes": terms}
     _agent_refs_append(obj["citations"], ctx)
-    # Fire-and-forget curation threads for any new high-conf PMIDs:
-    # fetch PubMed abstract → LLM-summarize → persist as prior knowledge
-    # for future chats. Uses the same BYOK key the chat ran on.
-    _kick_off_curation(obj["citations"], ctx,
-                        api_key=anthropic_api_key,
-                        ncbi_api_key=ncbi_api_key, ncbi_email=ncbi_email)
+    # Curation is now USER-TRIGGERED via POST /citations/curate (cf. the
+    # 📝 Summarize button in the citation card). We do not auto-fire it
+    # here because each summary costs ~1.5k BYOK tokens; on Tier 1 plans
+    # that can push the user over the per-minute cap during active chat.
     return obj
 
 
@@ -1415,11 +1413,11 @@ def chat_with_agent_stream(message: str, graph_state: dict, history: list,
     ctx = {"disease": disease_id, "cs": cs_id, "genes": terms}
     _agent_refs_append(obj["citations"], ctx)
     yield ("done", obj)
-    # Curation runs AFTER yielding 'done' so the SSE stream closes
-    # promptly; the daemon threads continue in the background.
-    _kick_off_curation(obj["citations"], ctx,
-                        api_key=anthropic_api_key,
-                        ncbi_api_key=ncbi_api_key, ncbi_email=ncbi_email)
+    # Note: curation (PubMed abstract → AI summary → /var/lib/heartgrn/
+    # curated_knowledge/<pmid>.json) is USER-TRIGGERED via the 📝
+    # Summarize button → POST /citations/curate. We intentionally do
+    # NOT auto-summarize here to keep the user's BYOK token spend
+    # explicit.
 
 
 def verify_pmids(citations: list, api_key: str | None = None,
@@ -1943,34 +1941,6 @@ def _summarize_and_persist(pmid: str, citation_meta: dict, context: dict,
         log.warning("curate persist failed PMID=%s: %s", pmid, e)
 
 
-def _kick_off_curation(citations: list[dict], context: dict, *,
-                        api_key: str,
-                        ncbi_api_key: str | None = None,
-                        ncbi_email: str | None = None) -> None:
-    """Fire daemon threads to summarize every newly-high-conf PMID that
-    doesn't yet have a curated summary. No-op for PMIDs already curated."""
-    if not citations:
-        return
-    import threading as _t
-    n_kicked = 0
-    for c in citations:
-        if c.get("confidence") != "high":
-            continue
-        pmid = str(c.get("pmid") or "")
-        if not pmid or _load_curated(pmid):
-            continue
-        t = _t.Thread(target=_summarize_and_persist,
-                       args=(pmid, c, context),
-                       kwargs={"api_key": api_key,
-                                "ncbi_api_key": ncbi_api_key,
-                                "ncbi_email": ncbi_email},
-                       daemon=True)
-        t.start()
-        n_kicked += 1
-    if n_kicked:
-        log.info("kicked off %d curation thread(s)", n_kicked)
-
-
 def _credible_confidence(up: int, down: int, recurrence: int = 0) -> str:
     """Combine user up/down votes + agent recurrence into a confidence band:
        flagged → users have net-down-voted (don't trust)
@@ -2481,6 +2451,69 @@ class LitHandler(BaseHTTPRequestHandler):
                      pmid, vote, agg.get("up", 0), agg.get("down", 0))
             self._json(200, {"pmid": pmid, "vote": vote,
                              "up": agg.get("up", 0), "down": agg.get("down", 0)})
+            return
+
+        # POST /citations/curate — user-triggered summarization. Fetches
+        # the PubMed abstract and asks the BYOK LLM for a 3-4 sentence
+        # digest + key findings, persists to /var/lib/heartgrn/
+        # curated_knowledge/<pmid>.json. Synchronous (~10-60s); the
+        # caller is expected to show a spinner. Body: {"pmid": "...",
+        # "title?": "...", "context?": {...}}.
+        if path == "/citations/curate":
+            client_ip = (self.headers.get("CF-Connecting-IP")
+                         or (self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or None)
+                         or self.client_address[0])
+            allowed, retry_after = rate_limit_check(client_ip, "/chat")
+            if not allowed:
+                self._json(429, {"error": "rate_limited",
+                                  "message": f"Too many requests; retry after {retry_after}s",
+                                  "retry_after": retry_after}); return
+            user_key = self.headers.get("X-API-Key", "").strip()
+            if not user_key or not (user_key.startswith("sk-ant-") or user_key.startswith("AIza")):
+                self._json(401, {"error": "byok_required",
+                                  "message": "API key must start with 'sk-ant-' or 'AIza'"}); return
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            try:
+                body = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                self._json(400, {"error": "bad json"}); return
+            pmid = str(body.get("pmid") or "").strip()
+            if not pmid or not re.fullmatch(r"\d{1,10}", pmid):
+                self._json(400, {"error": "valid pmid required"}); return
+            existing = _load_curated(pmid)
+            force = bool(body.get("force"))
+            if existing and not force:
+                self._json(200, {"status": "exists", "pmid": pmid,
+                                  "summary": existing.get("summary"),
+                                  "key_findings": existing.get("key_findings", []),
+                                  "title": existing.get("title")})
+                return
+            citation_meta = {
+                "pmid": pmid,
+                "title": str(body.get("title") or "")[:300],
+                "journal": str(body.get("journal") or "")[:80],
+                "year": body.get("year"),
+            }
+            context = body.get("context") or {}
+            if not isinstance(context, dict):
+                context = {}
+            try:
+                _summarize_and_persist(
+                    pmid, citation_meta, context,
+                    api_key=user_key,
+                    ncbi_api_key=self.server.ncbi_api_key,   # type: ignore[attr-defined]
+                    ncbi_email=self.server.ncbi_email)        # type: ignore[attr-defined]
+            except Exception as e:
+                self._json(500, {"error": f"summarize failed: {e}"}); return
+            saved = _load_curated(pmid)
+            if not saved:
+                self._json(500, {"error": "summary not saved (LLM may have returned unparseable JSON; check server logs)"}); return
+            log.info("curate POST → saved pmid=%s by ip=%s", pmid, client_ip)
+            self._json(200, {"status": "saved", "pmid": pmid,
+                              "summary": saved.get("summary"),
+                              "key_findings": saved.get("key_findings", []),
+                              "title": saved.get("title")})
             return
 
         m = re.fullmatch(r"/literature/(\w+)/(.+)", path)

@@ -565,17 +565,28 @@
                ${kfs.length ? `<ul class="cached-ref-keyfindings">${kfs.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>` : ""}
              </details>`
           : "";
+        const curateBtn = `<button class="cit-curate-btn cached-row-btn"
+                                  data-pmid="${c.pmid}"
+                                  data-title="${escapeHtml(c.title || "")}"
+                                  data-journal="${escapeHtml(c.journal || "")}"
+                                  data-year="${c.year || ""}"
+                                  title="${c.curated ? "Re-view AI summary" : "Summarize abstract (uses BYOK tokens)"}">${c.curated ? "🧠 View" : "📝 Summarize"}</button>`;
         return `
           <div class="cached-ref-row">
             <span class="cit-conf ${ci.cls}">${ci.emoji} ${c.confidence}</span>${curatedTag}
             <a href="${c.url}" target="_blank" rel="noopener">PMID ${c.pmid}</a>
             <span class="cached-ref-meta">×${c.recurrence}${meta ? " · " + escapeHtml(meta) : ""}</span>
+            ${curateBtn}
             <div class="cached-ref-title">${escapeHtml(c.title || "(no title)")}</div>
             ${c.key_finding && !c.curated ? `<div class="cached-ref-finding">${escapeHtml(c.key_finding)}</div>` : ""}
             ${summaryBlock}
           </div>
         `;
       }).join("");
+      // Wire the Summarize/View buttons in this panel
+      body.querySelectorAll(".cit-curate-btn").forEach((btn) => {
+        btn.addEventListener("click", () => curatePmidFromBtn(btn));
+      });
     } catch (e) {
       console.warn("[cached-refs] fetch error", e);
       cnt.textContent = "Cached refs (?)";
@@ -583,6 +594,102 @@
     }
   }
   window.refreshCachedRefsPanel = refreshCachedRefsPanel;
+
+  // ---- Curate (user-triggered abstract summarization) ---------------------
+  // Pulled out so it can be called from both citation cards and the cached
+  // refs panel. The endpoint runs synchronously on the server side; we
+  // disable the button + show a pulsing label and refresh on success.
+  async function curatePmidFromBtn(btn) {
+    const pmid = btn.dataset.pmid;
+    if (!pmid) return;
+    const key = localStorage.getItem("anthropic_api_key") || "";
+    if (!key || !(key.startsWith("sk-ant-") || key.startsWith("AIza"))) {
+      alert("Summarize needs your LLM API key (Anthropic or Gemini). Activate via the 🔑 button first.");
+      if (typeof window.openByokModal === "function") window.openByokModal();
+      return;
+    }
+    const wasView = btn.textContent.trim().startsWith("🧠");
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = wasView ? "🧠 Loading…" : "📝 Summarizing…";
+    btn.classList.add("cit-curate-busy");
+    try {
+      const body = {
+        pmid,
+        title: btn.dataset.title || "",
+        journal: btn.dataset.journal || "",
+        year: btn.dataset.year || null,
+        context: { disease: S.diseaseId || "", cs: S.targetCs || "" },
+      };
+      // If user is explicitly clicking the View button, do not force
+      // re-summarize; the server returns the existing entry.
+      const r = await fetch(`${S.literatureBaseUrl}/citations/curate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": key,
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok || !data || !data.summary) {
+        const msg = (data && (data.error || data.message)) || `HTTP ${r.status}`;
+        alert(`Summarize failed: ${msg}`);
+        btn.textContent = originalLabel;
+        return;
+      }
+      // Render a modal-ish overlay showing the summary + key findings.
+      _showCuratedOverlay(data);
+      // Flip the button to "🧠 View" if it wasn't already.
+      btn.textContent = "🧠 View";
+      btn.title = "AI summary cached on server — click to re-view";
+      // Refresh cached refs panel so the curated badge appears there too.
+      refreshCachedRefsPanel();
+    } catch (e) {
+      console.warn("[curate] error", e);
+      alert(`Summarize failed (network): ${e.message || e}`);
+      btn.textContent = originalLabel;
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove("cit-curate-busy");
+    }
+  }
+  window.curatePmidFromBtn = curatePmidFromBtn;
+
+  function _showCuratedOverlay(data) {
+    let overlay = document.getElementById("curated-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "curated-overlay";
+      overlay.className = "curated-overlay";
+      overlay.innerHTML = `
+        <div class="curated-overlay-card">
+          <button class="curated-close" title="Close">✕</button>
+          <h3>🧠 AI summary — PMID <span class="curated-pmid"></span></h3>
+          <div class="curated-title"></div>
+          <div class="curated-summary"></div>
+          <ul class="curated-key-findings"></ul>
+          <div class="curated-foot">Saved as prior knowledge. Future chats in this context will read this digest automatically.</div>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector(".curated-close").addEventListener("click",
+        () => overlay.classList.remove("visible"));
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) overlay.classList.remove("visible");
+      });
+    }
+    overlay.querySelector(".curated-pmid").textContent = data.pmid || "?";
+    overlay.querySelector(".curated-title").textContent = data.title || "";
+    overlay.querySelector(".curated-summary").textContent = data.summary || "";
+    const ul = overlay.querySelector(".curated-key-findings");
+    ul.innerHTML = "";
+    for (const kf of (data.key_findings || [])) {
+      const li = document.createElement("li");
+      li.textContent = kf;
+      ul.appendChild(li);
+    }
+    overlay.classList.add("visible");
+  }
 
   function syncControlsFromState() {
     $("topn-slider").value = S.topN;
@@ -2389,11 +2496,24 @@
         ? `<span class="cit-vote" data-pmid="${c.pmid}" data-title="${escapeHtml(c.title || "")}">
              <button class="cit-vote-btn cit-vote-up"   data-vote="up"   title="Mark as credible (after you read the paper)">👍 <span class="cit-up-count">${c.credible_up || 0}</span></button>
              <button class="cit-vote-btn cit-vote-down" data-vote="down" title="Flag as not credible">👎 <span class="cit-down-count">${c.credible_down || 0}</span></button>
+             <button class="cit-curate-btn" data-pmid="${c.pmid}"
+                     data-title="${escapeHtml(c.title || "")}"
+                     data-journal="${escapeHtml(c.journal || "")}"
+                     data-year="${c.year || ""}"
+                     title="${c.curated ? "Already summarized — click to view AI summary" : "Fetch PubMed abstract and ask the LLM to summarize (uses your BYOK tokens)"}">${c.curated ? "🧠 View" : "📝 Summarize"}</button>
            </span>`
         : "";
       div.innerHTML = `${badge} ${confPill} ${cachedPill} ${curatedPill} <b>${escapeHtml(c.title || "(no title)")}</b>`
         + `<div class="meta">${meta2} — ${link} ${voteWidget}</div>`
         + (c.key_finding ? `<div>${escapeHtml(c.key_finding)}</div>` : "");
+      // Wire 📝 Summarize / 🧠 View button. Curate-summary requires the
+      // user's BYOK key (same path as chat); the call is synchronous and
+      // can take 10-60s, so we show a pulsing spinner and refresh the
+      // 📚 cached refs panel on success.
+      div.querySelectorAll(".cit-curate-btn").forEach((btn) => {
+        btn.addEventListener("click", () => curatePmidFromBtn(btn));
+      });
+
       // Wire vote buttons
       div.querySelectorAll(".cit-vote-btn").forEach((btn) => {
         btn.addEventListener("click", async () => {
