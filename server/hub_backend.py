@@ -1220,13 +1220,16 @@ def verify_citations_in_response(obj: dict, grounding: list[dict], *,
         row["credible_up"] = up
         row["credible_down"] = down
         row["confidence"] = _credible_confidence(up, down, c.get("_recurrence", 0))
-        # `from_cache` is set on the grounding entry when we inject it from
-        # the agent-references cache (see extend_grounding_with_cache); pass
-        # it through so the UI can show a "cached" hint.
+        # `from_cache` / `curated` are set on the grounding entry when we
+        # inject from the agent-references cache. Propagate so the UI can
+        # show 📚 cached / 🧠 curated badges.
+        g_match = grounding_pmids.get(pmid, {})
         if isinstance(c, dict) and c.get("from_cache"):
             row["from_cache"] = True
-        elif pmid in grounding_pmids and grounding_pmids[pmid].get("from_cache"):
+        elif g_match.get("from_cache"):
             row["from_cache"] = True
+        if g_match.get("curated") or _load_curated(pmid):
+            row["curated"] = True
         out.append(row)
     return out
 
@@ -1252,14 +1255,27 @@ def extend_grounding_with_cache(grounding: list[dict], *,
         conf = _credible_confidence(agg["up"], agg["down"], r["recurrence"])
         if conf != "high":
             continue   # only auto-inject high-confidence cached refs
+        # If we have a curated AI summary for this PMID (vote-curated
+        # prior knowledge), prefer it over the raw key_finding so the
+        # model sees the most informative snippet.
+        cur = _load_curated(pmid)
+        if cur:
+            entry_kf = cur.get("summary") or r["key_finding"]
+            kfs = cur.get("key_findings") or []
+            if kfs:
+                entry_kf = (entry_kf + " · " +
+                              " ; ".join(str(k) for k in kfs[:3]))[:700]
+        else:
+            entry_kf = r["key_finding"]
         grounding.append({
             "pmid": pmid,
             "title": r["title"],
             "journal": r["journal"],
             "year": r["year"],
-            "key_finding": r["key_finding"],
+            "key_finding": entry_kf,
             "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
             "from_cache": True,
+            "curated": bool(cur),
             "_recurrence": r["recurrence"],
         })
         seen.add(pmid); added += 1
@@ -1326,9 +1342,15 @@ def chat_with_agent(message: str, graph_state: dict, history: list,
     obj["grounding_terms"] = terms
     # 4. Persist every verified PMID with the current context so the next
     #    chat in this context can reuse them as grounding.
-    _agent_refs_append(obj["citations"],
-                       {"disease": disease_id, "cs": graph_state.get("target_cs", ""),
-                        "genes": terms})
+    ctx = {"disease": disease_id, "cs": graph_state.get("target_cs", ""),
+           "genes": terms}
+    _agent_refs_append(obj["citations"], ctx)
+    # Fire-and-forget curation threads for any new high-conf PMIDs:
+    # fetch PubMed abstract → LLM-summarize → persist as prior knowledge
+    # for future chats. Uses the same BYOK key the chat ran on.
+    _kick_off_curation(obj["citations"], ctx,
+                        api_key=anthropic_api_key,
+                        ncbi_api_key=ncbi_api_key, ncbi_email=ncbi_email)
     return obj
 
 
@@ -1390,9 +1412,14 @@ def chat_with_agent_stream(message: str, graph_state: dict, history: list,
                                                      api_key=ncbi_api_key, email=ncbi_email)
     obj["grounding_count"] = len(grounding)
     obj["grounding_terms"] = terms
-    _agent_refs_append(obj["citations"],
-                       {"disease": disease_id, "cs": cs_id, "genes": terms})
+    ctx = {"disease": disease_id, "cs": cs_id, "genes": terms}
+    _agent_refs_append(obj["citations"], ctx)
     yield ("done", obj)
+    # Curation runs AFTER yielding 'done' so the SSE stream closes
+    # promptly; the daemon threads continue in the background.
+    _kick_off_curation(obj["citations"], ctx,
+                        api_key=anthropic_api_key,
+                        ncbi_api_key=ncbi_api_key, ncbi_email=ncbi_email)
 
 
 def verify_pmids(citations: list, api_key: str | None = None,
@@ -1809,6 +1836,141 @@ def _agent_refs_by_context(disease: str, cs: str,
     return out
 
 
+# ---- curated knowledge (PMID → vote-curated AI summary) --------------------
+CURATED_KNOWLEDGE_DIR = Path(os.environ.get(
+    "CURATED_KNOWLEDGE_DIR",
+    "/var/lib/heartgrn/curated_knowledge",
+))
+
+
+def _curated_knowledge_dir() -> Path:
+    try:
+        CURATED_KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
+        return CURATED_KNOWLEDGE_DIR
+    except (PermissionError, OSError):
+        return Path("/tmp/curated_knowledge")
+
+
+def _curated_path(pmid: str) -> Path:
+    return _curated_knowledge_dir() / f"{pmid}.json"
+
+
+def _load_curated(pmid: str) -> dict | None:
+    p = _curated_path(pmid)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _fetch_pubmed_abstract(pmid: str, *, api_key: str | None = None,
+                            email: str | None = None) -> str:
+    """One-shot efetch for a PubMed PMID. Returns the plain-text abstract
+    (with title), or empty string on failure."""
+    try:
+        raw = _http_get(NCBI_EFETCH, {
+            "db": "pubmed", "id": pmid,
+            "rettype": "abstract", "retmode": "text",
+        }, api_key=api_key, email=email)
+        return (raw or "").strip()
+    except Exception as e:
+        log.warning("efetch abstract failed for PMID %s: %s", pmid, e)
+        return ""
+
+
+def _summarize_and_persist(pmid: str, citation_meta: dict, context: dict,
+                            *, api_key: str,
+                            ncbi_api_key: str | None = None,
+                            ncbi_email: str | None = None) -> None:
+    """Background worker. Skip if a summary already exists; otherwise fetch
+    the PubMed abstract, ask the LLM for a 3-4 sentence digest + key findings,
+    and persist as /var/lib/heartgrn/curated_knowledge/<pmid>.json. Failures
+    are logged but never raised — this runs in a daemon thread and must not
+    crash the parent."""
+    if not pmid or _load_curated(pmid):
+        return
+    abstract = _fetch_pubmed_abstract(pmid, api_key=ncbi_api_key, email=ncbi_email)
+    if not abstract or len(abstract) < 60:
+        log.warning("curated skipped (no abstract) PMID=%s", pmid)
+        return
+    prompt = (
+        "Summarize the following PubMed abstract for a cardiac gene-regulatory-"
+        "network research context in 3-4 sentences. Focus on: the key biological "
+        "finding, the gene(s) / variant(s) involved, the cell type or tissue, and "
+        "the clinical relevance to cardiovascular disease. Then list 3-5 short "
+        "bullet 'key findings' (≤ 14 words each). Output JSON only, no prose:\n"
+        '{"summary": "...", "key_findings": ["...", "..."]}\n\n'
+        f"PMID: {pmid}\n"
+        f"Title: {citation_meta.get('title','')}\n"
+        f"Journal: {citation_meta.get('journal','')}  Year: {citation_meta.get('year','')}\n\n"
+        f"Abstract:\n{abstract[:7000]}"
+    )
+    try:
+        raw = _call_llm_sdk(prompt, api_key=api_key, max_tokens=700, timeout=90)
+    except Exception as e:
+        log.warning("curate summarize LLM call failed PMID=%s: %s", pmid, e)
+        return
+    parsed = _strip_json(raw)
+    if not isinstance(parsed, dict):
+        log.warning("curate summary unparseable for PMID=%s; raw head=%r",
+                     pmid, (raw or "")[:200])
+        return
+    summary = (parsed.get("summary") or "").strip()
+    key_findings = parsed.get("key_findings") or []
+    if not isinstance(key_findings, list):
+        key_findings = []
+    if not summary:
+        log.warning("curate summary empty for PMID=%s", pmid)
+        return
+    entry = {
+        "pmid": pmid,
+        "title": citation_meta.get("title"),
+        "journal": citation_meta.get("journal"),
+        "year": citation_meta.get("year"),
+        "abstract": abstract[:10000],
+        "summary": summary,
+        "key_findings": [str(x)[:200] for x in key_findings][:8],
+        "first_high_ts": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "context": context,
+    }
+    try:
+        _curated_path(pmid).write_text(json.dumps(entry, indent=2))
+        log.info("curated knowledge saved PMID=%s len(summary)=%d kf=%d",
+                  pmid, len(summary), len(entry["key_findings"]))
+    except OSError as e:
+        log.warning("curate persist failed PMID=%s: %s", pmid, e)
+
+
+def _kick_off_curation(citations: list[dict], context: dict, *,
+                        api_key: str,
+                        ncbi_api_key: str | None = None,
+                        ncbi_email: str | None = None) -> None:
+    """Fire daemon threads to summarize every newly-high-conf PMID that
+    doesn't yet have a curated summary. No-op for PMIDs already curated."""
+    if not citations:
+        return
+    import threading as _t
+    n_kicked = 0
+    for c in citations:
+        if c.get("confidence") != "high":
+            continue
+        pmid = str(c.get("pmid") or "")
+        if not pmid or _load_curated(pmid):
+            continue
+        t = _t.Thread(target=_summarize_and_persist,
+                       args=(pmid, c, context),
+                       kwargs={"api_key": api_key,
+                                "ncbi_api_key": ncbi_api_key,
+                                "ncbi_email": ncbi_email},
+                       daemon=True)
+        t.start()
+        n_kicked += 1
+    if n_kicked:
+        log.info("kicked off %d curation thread(s)", n_kicked)
+
+
 def _credible_confidence(up: int, down: int, recurrence: int = 0) -> str:
     """Combine user up/down votes + agent recurrence into a confidence band:
        flagged → users have net-down-voted (don't trust)
@@ -2002,6 +2164,7 @@ class LitHandler(BaseHTTPRequestHandler):
             rows = []
             for pmid, r in cached.items():
                 agg = cred_agg.get(pmid, {"up": 0, "down": 0})
+                cur = _load_curated(pmid)
                 rows.append({
                     "pmid": pmid,
                     "title": r["title"],
@@ -2015,6 +2178,9 @@ class LitHandler(BaseHTTPRequestHandler):
                     "confidence": _credible_confidence(
                         agg.get("up", 0), agg.get("down", 0), r["recurrence"]),
                     "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                    "curated": bool(cur),
+                    "summary": cur.get("summary") if cur else None,
+                    "key_findings": cur.get("key_findings") if cur else None,
                 })
             # Sort: high → medium → low → flagged, then by recurrence desc.
             order = {"high": 0, "medium": 1, "low": 2, "flagged": 3}

@@ -556,13 +556,23 @@
       body.innerHTML = refs.map((c) => {
         const ci = confMap[c.confidence] || confMap.low;
         const meta = [c.year, c.journal].filter(Boolean).join(" · ");
+        const curatedTag = c.curated
+          ? ` <span class="cit-curated">🧠 curated</span>` : "";
+        const kfs = (c.key_findings || []).slice(0, 4);
+        const summaryBlock = c.curated && c.summary
+          ? `<details class="cached-ref-summary"><summary>🧠 AI summary</summary>
+               <div class="cached-ref-summary-body">${escapeHtml(c.summary)}</div>
+               ${kfs.length ? `<ul class="cached-ref-keyfindings">${kfs.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>` : ""}
+             </details>`
+          : "";
         return `
           <div class="cached-ref-row">
-            <span class="cit-conf ${ci.cls}">${ci.emoji} ${c.confidence}</span>
+            <span class="cit-conf ${ci.cls}">${ci.emoji} ${c.confidence}</span>${curatedTag}
             <a href="${c.url}" target="_blank" rel="noopener">PMID ${c.pmid}</a>
             <span class="cached-ref-meta">×${c.recurrence}${meta ? " · " + escapeHtml(meta) : ""}</span>
             <div class="cached-ref-title">${escapeHtml(c.title || "(no title)")}</div>
-            ${c.key_finding ? `<div class="cached-ref-finding">${escapeHtml(c.key_finding)}</div>` : ""}
+            ${c.key_finding && !c.curated ? `<div class="cached-ref-finding">${escapeHtml(c.key_finding)}</div>` : ""}
+            ${summaryBlock}
           </div>
         `;
       }).join("");
@@ -2365,6 +2375,9 @@
       const cachedPill = c.from_cache
         ? `<span class="cit-cached" title="Re-used from a previous chat in this context">📚 cached</span>`
         : "";
+      const curatedPill = c.curated
+        ? `<span class="cit-curated" title="Vote-curated prior knowledge: AI-generated abstract summary saved on the server">🧠 curated</span>`
+        : "";
       const linkTxt = c.pmid ? `PMID ${c.pmid}` : "(no PMID)";
       const url = c.url || (c.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${c.pmid}/` : null);
       const link = url ? `<a href="${url}" target="_blank" rel="noopener">${linkTxt}</a>` : linkTxt;
@@ -2378,7 +2391,7 @@
              <button class="cit-vote-btn cit-vote-down" data-vote="down" title="Flag as not credible">👎 <span class="cit-down-count">${c.credible_down || 0}</span></button>
            </span>`
         : "";
-      div.innerHTML = `${badge} ${confPill} ${cachedPill} <b>${escapeHtml(c.title || "(no title)")}</b>`
+      div.innerHTML = `${badge} ${confPill} ${cachedPill} ${curatedPill} <b>${escapeHtml(c.title || "(no title)")}</b>`
         + `<div class="meta">${meta2} — ${link} ${voteWidget}</div>`
         + (c.key_finding ? `<div>${escapeHtml(c.key_finding)}</div>` : "");
       // Wire vote buttons

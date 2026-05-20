@@ -258,6 +258,41 @@ button:active { transform: translateY(0.5px); }
   border: 1px solid #c4b5fd;
   margin-left: 4px;
 }
+.cit-curated {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  background: #dbeafe;
+  color: #1e3a8a;
+  border: 1px solid #93c5fd;
+  margin-left: 4px;
+}
+.cached-ref-summary {
+  margin-top: 4px;
+  font-size: 11.5px;
+}
+.cached-ref-summary summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #1e40af;
+  padding: 2px 0;
+}
+.cached-ref-summary-body {
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: #eff6ff;
+  border-left: 3px solid #3b82f6;
+  border-radius: 0 4px 4px 0;
+  white-space: pre-wrap;
+  color: #1e293b;
+}
+.cached-ref-keyfindings {
+  margin: 4px 0 0 0;
+  padding-left: 18px;
+  color: #475569;
+}
+.cached-ref-keyfindings li { margin-bottom: 2px; }
 
 /* Cached refs panel (📚 above chat) */
 .chat-cached-refs {
