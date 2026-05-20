@@ -1222,14 +1222,18 @@ def verify_citations_in_response(obj: dict, grounding: list[dict], *,
         row["confidence"] = _credible_confidence(up, down, c.get("_recurrence", 0))
         # `from_cache` / `curated` are set on the grounding entry when we
         # inject from the agent-references cache. Propagate so the UI can
-        # show 📚 cached / 🧠 curated badges.
+        # show the 🧠 curated badge + inline summary.
         g_match = grounding_pmids.get(pmid, {})
         if isinstance(c, dict) and c.get("from_cache"):
             row["from_cache"] = True
         elif g_match.get("from_cache"):
             row["from_cache"] = True
-        if g_match.get("curated") or _load_curated(pmid):
+        cur = _load_curated(pmid)
+        if g_match.get("curated") or cur:
             row["curated"] = True
+        if cur:
+            row["curated_summary"] = cur.get("summary")
+            row["curated_key_findings"] = cur.get("key_findings", [])
         out.append(row)
     return out
 
@@ -2117,48 +2121,6 @@ class LitHandler(BaseHTTPRequestHandler):
             pmid = m.group(1)
             agg = _credible_aggregate()
             self._json(200, {"pmid": pmid, **(agg.get(pmid, {"count": 0}))}); return
-        # GET /citations/cached?disease=...&cs=...&genes=GENE1,GENE2
-        # → list every agent-found PMID matching this context, with
-        #   recurrence + user up/down + derived confidence band.
-        if path == "/citations/cached":
-            qs = self.qs if hasattr(self, "qs") else {}
-            # Re-parse to be safe in case qs isn't on every code path.
-            from urllib.parse import urlparse, parse_qs
-            qs = parse_qs(urlparse(self.path).query)
-            disease = (qs.get("disease", [""])[0] or "").strip()
-            cs = (qs.get("cs", [""])[0] or "").strip()
-            genes_raw = (qs.get("genes", [""])[0] or "").strip()
-            genes = [g for g in re.split(r"[,\s]+", genes_raw) if g] if genes_raw else []
-            cached = _agent_refs_by_context(disease, cs, genes)
-            cred_agg = _credible_aggregate()
-            rows = []
-            for pmid, r in cached.items():
-                agg = cred_agg.get(pmid, {"up": 0, "down": 0})
-                cur = _load_curated(pmid)
-                rows.append({
-                    "pmid": pmid,
-                    "title": r["title"],
-                    "journal": r["journal"],
-                    "year": r["year"],
-                    "key_finding": r["key_finding"],
-                    "recurrence": r["recurrence"],
-                    "last_ts": r["last_ts"],
-                    "credible_up": agg.get("up", 0),
-                    "credible_down": agg.get("down", 0),
-                    "confidence": _credible_confidence(
-                        agg.get("up", 0), agg.get("down", 0), r["recurrence"]),
-                    "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                    "curated": bool(cur),
-                    "summary": cur.get("summary") if cur else None,
-                    "key_findings": cur.get("key_findings") if cur else None,
-                })
-            # Sort: high → medium → low → flagged, then by recurrence desc.
-            order = {"high": 0, "medium": 1, "low": 2, "flagged": 3}
-            rows.sort(key=lambda r: (order.get(r["confidence"], 9),
-                                       -r["recurrence"]))
-            self._json(200, {"refs": rows, "n": len(rows),
-                              "context": {"disease": disease, "cs": cs, "genes": genes}})
-            return
 
         # /snp/lookup/<rsid_or_variant_id> — debug helper
         m = re.fullmatch(r"/snp/lookup/(.+)", path)

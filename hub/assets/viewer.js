@@ -511,89 +511,7 @@
     populateEdgeCtSelect();
     rebuild();
     banner("");
-    refreshCachedRefsPanel();
   }
-
-  // ---- Cached refs panel (📚 above chat) ----------------------------------
-  // Pulls cached agent-found PMIDs matching current (disease, cs) and renders
-  // them as a collapsed list with confidence pills. Called whenever the
-  // viewer context changes (selectTargetCs, selectDisease) and after each
-  // chat response (so newly-cited PMIDs show up immediately).
-  async function refreshCachedRefsPanel() {
-    const body = document.getElementById("chat-cached-refs-body");
-    const cnt  = document.getElementById("chat-cached-refs-count");
-    if (!body || !cnt) return;
-    if (!S.diseaseId) {
-      cnt.textContent = "Cached refs (0)";
-      body.innerHTML = "<em>Select a disease first.</em>";
-      return;
-    }
-    try {
-      const qs = new URLSearchParams({
-        disease: S.diseaseId || "",
-        cs: S.targetCs || "",
-        genes: "",
-      });
-      const r = await fetch(`${S.literatureBaseUrl}/citations/cached?${qs}`);
-      if (!r.ok) {
-        cnt.textContent = "Cached refs (?)";
-        body.innerHTML = `<em>fetch failed: HTTP ${r.status}</em>`;
-        return;
-      }
-      const data = await r.json();
-      const refs = data.refs || [];
-      cnt.textContent = `Cached refs (${refs.length})`;
-      if (!refs.length) {
-        body.innerHTML = "<em>No cached refs in this context yet.</em>";
-        return;
-      }
-      const confMap = {
-        "high":    { emoji: "🟢", cls: "cit-conf-high" },
-        "medium":  { emoji: "🟡", cls: "cit-conf-medium" },
-        "low":     { emoji: "⚪", cls: "cit-conf-low" },
-        "flagged": { emoji: "🔴", cls: "cit-conf-flagged" },
-      };
-      body.innerHTML = refs.map((c) => {
-        const ci = confMap[c.confidence] || confMap.low;
-        const meta = [c.year, c.journal].filter(Boolean).join(" · ");
-        const curatedTag = c.curated
-          ? ` <span class="cit-curated">🧠 curated</span>` : "";
-        const kfs = (c.key_findings || []).slice(0, 4);
-        const summaryBlock = c.curated && c.summary
-          ? `<details class="cached-ref-summary"><summary>🧠 AI summary</summary>
-               <div class="cached-ref-summary-body">${escapeHtml(c.summary)}</div>
-               ${kfs.length ? `<ul class="cached-ref-keyfindings">${kfs.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>` : ""}
-             </details>`
-          : "";
-        const curateBtn = `<button class="cit-curate-btn cached-row-btn"
-                                  data-pmid="${c.pmid}"
-                                  data-title="${escapeHtml(c.title || "")}"
-                                  data-journal="${escapeHtml(c.journal || "")}"
-                                  data-year="${c.year || ""}"
-                                  title="${c.curated ? "Re-view AI summary" : "Summarize abstract (uses BYOK tokens)"}">${c.curated ? "🧠 View" : "📝 Summarize"}</button>`;
-        return `
-          <div class="cached-ref-row">
-            <span class="cit-conf ${ci.cls}">${ci.emoji} ${c.confidence}</span>${curatedTag}
-            <a href="${c.url}" target="_blank" rel="noopener">PMID ${c.pmid}</a>
-            <span class="cached-ref-meta">×${c.recurrence}${meta ? " · " + escapeHtml(meta) : ""}</span>
-            ${curateBtn}
-            <div class="cached-ref-title">${escapeHtml(c.title || "(no title)")}</div>
-            ${c.key_finding && !c.curated ? `<div class="cached-ref-finding">${escapeHtml(c.key_finding)}</div>` : ""}
-            ${summaryBlock}
-          </div>
-        `;
-      }).join("");
-      // Wire the Summarize/View buttons in this panel
-      body.querySelectorAll(".cit-curate-btn").forEach((btn) => {
-        btn.addEventListener("click", () => curatePmidFromBtn(btn));
-      });
-    } catch (e) {
-      console.warn("[cached-refs] fetch error", e);
-      cnt.textContent = "Cached refs (?)";
-      body.innerHTML = `<em>fetch error: ${escapeHtml(e.message || String(e))}</em>`;
-    }
-  }
-  window.refreshCachedRefsPanel = refreshCachedRefsPanel;
 
   // ---- Curate (user-triggered abstract summarization) ---------------------
   // Pulled out so it can be called from both citation cards and the cached
@@ -602,16 +520,27 @@
   async function curatePmidFromBtn(btn) {
     const pmid = btn.dataset.pmid;
     if (!pmid) return;
+    // If an inline summary block already exists in this row, just
+    // toggle its visibility — no extra server hit.
+    const row = btn.closest(".cit-row") || btn.parentElement;
+    const existingBlock = row && row.querySelector(":scope > .cit-curated-inline");
+    if (existingBlock) {
+      const hidden = existingBlock.style.display === "none";
+      existingBlock.style.display = hidden ? "" : "none";
+      btn.textContent = hidden ? "🧠 Hide" : "🧠 View";
+      btn.title = hidden ? "Hide AI summary" : "Show AI summary";
+      return;
+    }
+    // Otherwise this PMID isn't summarized yet — call the server.
     const key = localStorage.getItem("anthropic_api_key") || "";
     if (!key || !(key.startsWith("sk-ant-") || key.startsWith("AIza"))) {
       alert("Summarize needs your LLM API key (Anthropic or Gemini). Activate via the 🔑 button first.");
       if (typeof window.openByokModal === "function") window.openByokModal();
       return;
     }
-    const wasView = btn.textContent.trim().startsWith("🧠");
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = wasView ? "🧠 Loading…" : "📝 Summarizing…";
+    btn.textContent = "📝 Summarizing…";
     btn.classList.add("cit-curate-busy");
     try {
       const body = {
@@ -621,14 +550,9 @@
         year: btn.dataset.year || null,
         context: { disease: S.diseaseId || "", cs: S.targetCs || "" },
       };
-      // If user is explicitly clicking the View button, do not force
-      // re-summarize; the server returns the existing entry.
       const r = await fetch(`${S.literatureBaseUrl}/citations/curate`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": key,
-        },
+        headers: { "Content-Type": "application/json", "X-API-Key": key },
         body: JSON.stringify(body),
       });
       const data = await r.json().catch(() => null);
@@ -638,13 +562,9 @@
         btn.textContent = originalLabel;
         return;
       }
-      // Render a modal-ish overlay showing the summary + key findings.
-      _showCuratedOverlay(data);
-      // Flip the button to "🧠 View" if it wasn't already.
-      btn.textContent = "🧠 View";
-      btn.title = "AI summary cached on server — click to re-view";
-      // Refresh cached refs panel so the curated badge appears there too.
-      refreshCachedRefsPanel();
+      _renderInlineSummary(btn, data);
+      btn.textContent = "🧠 Hide";
+      btn.title = "Hide AI summary";
     } catch (e) {
       console.warn("[curate] error", e);
       alert(`Summarize failed (network): ${e.message || e}`);
@@ -656,39 +576,24 @@
   }
   window.curatePmidFromBtn = curatePmidFromBtn;
 
-  function _showCuratedOverlay(data) {
-    let overlay = document.getElementById("curated-overlay");
-    if (!overlay) {
-      overlay = document.createElement("div");
-      overlay.id = "curated-overlay";
-      overlay.className = "curated-overlay";
-      overlay.innerHTML = `
-        <div class="curated-overlay-card">
-          <button class="curated-close" title="Close">✕</button>
-          <h3>🧠 AI summary — PMID <span class="curated-pmid"></span></h3>
-          <div class="curated-title"></div>
-          <div class="curated-summary"></div>
-          <ul class="curated-key-findings"></ul>
-          <div class="curated-foot">Saved as prior knowledge. Future chats in this context will read this digest automatically.</div>
-        </div>`;
-      document.body.appendChild(overlay);
-      overlay.querySelector(".curated-close").addEventListener("click",
-        () => overlay.classList.remove("visible"));
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) overlay.classList.remove("visible");
-      });
+  function _renderInlineSummary(btn, data) {
+    // Append (or refresh) an inline summary block inside the citation
+    // row. Subsequent clicks toggle visibility via curatePmidFromBtn.
+    const row = btn.closest(".cit-row") || btn.parentElement;
+    if (!row) return;
+    let block = row.querySelector(":scope > .cit-curated-inline");
+    if (!block) {
+      block = document.createElement("div");
+      block.className = "cit-curated-inline";
+      row.appendChild(block);
     }
-    overlay.querySelector(".curated-pmid").textContent = data.pmid || "?";
-    overlay.querySelector(".curated-title").textContent = data.title || "";
-    overlay.querySelector(".curated-summary").textContent = data.summary || "";
-    const ul = overlay.querySelector(".curated-key-findings");
-    ul.innerHTML = "";
-    for (const kf of (data.key_findings || [])) {
-      const li = document.createElement("li");
-      li.textContent = kf;
-      ul.appendChild(li);
-    }
-    overlay.classList.add("visible");
+    const kfs = (data.key_findings || []).slice(0, 6);
+    block.innerHTML =
+      `<div class="cit-curated-summary">${escapeHtml(data.summary || "")}</div>` +
+      (kfs.length
+        ? `<ul class="cit-curated-keyfindings">${kfs.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>`
+        : "");
+    block.style.display = "";
   }
 
   function syncControlsFromState() {
@@ -2503,9 +2408,17 @@
                      title="${c.curated ? "Already summarized — click to view AI summary" : "Fetch PubMed abstract and ask the LLM to summarize (uses your BYOK tokens)"}">${c.curated ? "🧠 View" : "📝 Summarize"}</button>
            </span>`
         : "";
+      const kfsList = Array.isArray(c.curated_key_findings) ? c.curated_key_findings.slice(0, 6) : [];
+      const curatedInline = (c.curated && c.curated_summary)
+        ? `<div class="cit-curated-inline" style="display:none">
+             <div class="cit-curated-summary">${escapeHtml(c.curated_summary)}</div>
+             ${kfsList.length ? `<ul class="cit-curated-keyfindings">${kfsList.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>` : ""}
+           </div>`
+        : "";
       div.innerHTML = `${badge} ${confPill} ${cachedPill} ${curatedPill} <b>${escapeHtml(c.title || "(no title)")}</b>`
         + `<div class="meta">${meta2} — ${link} ${voteWidget}</div>`
-        + (c.key_finding ? `<div>${escapeHtml(c.key_finding)}</div>` : "");
+        + (c.key_finding ? `<div>${escapeHtml(c.key_finding)}</div>` : "")
+        + curatedInline;
       // Wire 📝 Summarize / 🧠 View button. Curate-summary requires the
       // user's BYOK key (same path as chat); the call is synchronous and
       // can take 10-60s, so we show a pulsing spinner and refresh the
@@ -2951,9 +2864,6 @@
                         { grounding_count: data.grounding_count,
                           grounding_terms: data.grounding_terms });
       S.chatHistory.push({ role: "agent", content: msg, actions: allActions });
-      // Pull fresh cached-refs list now that this response just persisted
-      // new PMIDs (or bumped recurrence) on the server.
-      refreshCachedRefsPanel();
       // `message` = original user prompt; tell the dispatcher what the user
       // is interested in so highlight_nodes anchors the camera there.
       S.lastUserFocusIds = extractMentionedNodeIds(message);
