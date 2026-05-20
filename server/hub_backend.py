@@ -324,6 +324,59 @@ def _call_anthropic_sdk(prompt: str, *, api_key: str,
     return "".join(text_parts).strip()
 
 
+def _call_gemini_sdk(prompt: str, *, api_key: str,
+                      allowed_tools: list[str] | None = None,
+                      timeout: int = 300,
+                      model: str | None = None,
+                      max_tokens: int = 4096) -> str:
+    """Call Google Gemini API; return text. Mirrors _call_anthropic_sdk.
+
+    api_key: BYOK Google API key (AIzaSy...) from aistudio.google.com.
+    allowed_tools: ['WebSearch'] enables Gemini's google_search grounding
+    (Google's equivalent of Anthropic's web_search built-in tool).
+    """
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        raise AgentError("google-genai SDK not installed (pip install google-genai)")
+    if not api_key:
+        raise AgentError("invalid Google API key (empty)")
+
+    model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    client = genai.Client(api_key=api_key)
+    tools_arg = []
+    if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
+        tools_arg.append(types.Tool(google_search=types.GoogleSearch()))
+
+    try:
+        resp = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=max_tokens,
+                tools=tools_arg or None,
+            ),
+        )
+    except Exception as e:
+        emsg = str(e).lower()
+        if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
+            raise AgentError(f"gemini auth failed (check your Google API key): {e}")
+        if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
+            raise AgentError(f"gemini quota/rate exceeded: {e}")
+        raise AgentError(f"gemini API error: {e}")
+    return (resp.text or "").strip()
+
+
+def _call_llm_sdk(prompt: str, *, api_key: str, **kwargs) -> str:
+    """Dispatch to the provider implied by the api_key prefix.
+       'sk-ant-...' -> Anthropic ; otherwise -> Google Gemini.
+    """
+    if api_key and api_key.startswith("sk-ant-"):
+        return _call_anthropic_sdk(prompt, api_key=api_key, **kwargs)
+    return _call_gemini_sdk(prompt, api_key=api_key, **kwargs)
+
+
 # Backwards-compat alias for legacy call sites (will be removed after audit).
 def _run_claude(prompt: str, *, api_key: str | None = None,
                 allowed_tools: list[str] | None = None,
@@ -850,8 +903,8 @@ def chat_with_agent(message: str, graph_state: dict, history: list,
                                 snp_cross_hits=snp_hits,
                                 gene_cross_hits=gene_hits)
     tools = ["WebSearch"] if use_websearch else None
-    raw = _call_anthropic_sdk(prompt, api_key=anthropic_api_key,
-                                allowed_tools=tools, timeout=timeout)
+    raw = _call_llm_sdk(prompt, api_key=anthropic_api_key,
+                          allowed_tools=tools, timeout=timeout)
     obj = _strip_json(raw)
     if not isinstance(obj, dict):
         return {"message": "(Agent did not return parseable JSON.)",
@@ -1350,10 +1403,10 @@ class LitHandler(BaseHTTPRequestHandler):
             user_key = self.headers.get("X-API-Key", "").strip()
             if not user_key:
                 self._json(401, {"error": "byok_required",
-                                 "message": "Provide your Anthropic API key in X-API-Key header"}); return
-            if not user_key.startswith("sk-ant-"):
+                                 "message": "Provide an API key in X-API-Key header (Anthropic sk-ant-... or Google AIzaSy...)"}); return
+            if not (user_key.startswith("sk-ant-") or user_key.startswith("AIza")):
                 self._json(401, {"error": "invalid_key_format",
-                                 "message": "API key must start with sk-ant-"}); return
+                                 "message": "API key must start with 'sk-ant-' (Anthropic) or 'AIza' (Google Gemini)"}); return
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length) if length else b""
             try:

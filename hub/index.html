@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779282210">
+<link rel="stylesheet" href="assets/styles.css?v=1779283965">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -72,21 +72,23 @@
   </div>
 </div>
 
-<!-- ===== BYOK Anthropic key modal ===== -->
+<!-- ===== BYOK Anthropic / Gemini key modal ===== -->
 <div id="byok-modal" class="gate-overlay" style="display:none">
   <div class="gate-card">
     <h2>Activate Agent chat</h2>
-    <p>The interactive chat panel uses <b>your own Anthropic API key</b>. The key is stored in this browser's localStorage only — never sent to or stored on our servers. The backend proxies it to Anthropic for one request and discards it.</p>
+    <p>The interactive chat panel uses <b>your own LLM API key</b>. The key is stored in this browser's localStorage only — never sent to or stored on our servers. The backend proxies it to your chosen provider for one request and discards it.</p>
     <p>Graph exploration (nodes, edges, paths, panels) does not require a key.</p>
     <div class="row">
-      <input id="byok-input" type="password" autocomplete="off" placeholder="sk-ant-...">
+      <input id="byok-input" type="password" autocomplete="off" placeholder="sk-ant-... (Anthropic) or AIzaSy... (Google Gemini)">
       <button id="byok-save">Activate</button>
       <button id="byok-cancel" class="secondary">Cancel</button>
     </div>
     <div id="byok-err" class="err"></div>
     <div class="hint">
-      No key? Sign up at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> — new users get $5 free credit ≈ 1,000 graph queries.<br>
-      Or, after activating, click the badge in the top-right to clear or replace your key.
+      No key? Two free options:<br>
+      • <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a> — 1,500 free Gemini requests / day, no card required.<br>
+      • <a href="https://console.anthropic.com" target="_blank">Anthropic console</a> — $5 free credit for new accounts (≈ 1,000 graph queries).<br>
+      Provider is auto-detected from the key prefix (<code>sk-ant-</code> → Anthropic, <code>AIza</code> → Gemini).
     </div>
   </div>
 </div>
@@ -143,9 +145,10 @@
     if (!btn) return;
     btn.style.display = "";
     const k = localStorage.getItem("anthropic_api_key") || "";
-    if (k && k.startsWith("sk-ant-")) {
+    if (k && (k.startsWith("sk-ant-") || k.startsWith("AIza"))) {
       btn.classList.add("ok");
-      btn.textContent = "🔑 Key set · settings";
+      const label = k.startsWith("sk-ant-") ? "Anthropic" : "Gemini";
+      btn.textContent = `🔑 ${label} key set · settings`;
     } else {
       btn.classList.remove("ok");
       btn.textContent = "🔑 Activate Agent";
@@ -171,8 +174,8 @@
       refreshActivateButton();
       return;
     }
-    if (!v.startsWith("sk-ant-")) {
-      err.textContent = "Anthropic keys start with 'sk-ant-'. Paste the full key.";
+    if (!(v.startsWith("sk-ant-") || v.startsWith("AIza"))) {
+      err.textContent = "Key must start with 'sk-ant-' (Anthropic) or 'AIza' (Google Gemini). Paste the full key.";
       return;
     }
     localStorage.setItem("anthropic_api_key", v);
@@ -369,7 +372,7 @@
   <div class="chat-meta" id="chat-meta"></div>
 </div>
 
-<script src="assets/specificity.js?v=1779282210"></script>
-<script src="assets/viewer.js?v=1779282210"></script>
+<script src="assets/specificity.js?v=1779283965"></script>
+<script src="assets/viewer.js?v=1779283965"></script>
 </body>
 </html>

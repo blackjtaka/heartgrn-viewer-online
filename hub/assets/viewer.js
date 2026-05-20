@@ -2114,17 +2114,19 @@
     const timerId = setInterval(tick, 1000);
     const stopThinking = () => { clearInterval(timerId); ph.remove(); };
 
-    // BYOK: load Anthropic key from localStorage; if missing, prompt the user
+    // BYOK: load LLM API key from localStorage; if missing, prompt the user.
+    // Accepts Anthropic (sk-ant-...) or Google Gemini (AIza...) keys.
     const anthropicKey = localStorage.getItem("anthropic_api_key") || "";
-    if (!anthropicKey || !anthropicKey.startsWith("sk-ant-")) {
+    const validKey = anthropicKey && (anthropicKey.startsWith("sk-ant-") || anthropicKey.startsWith("AIza"));
+    if (!validKey) {
       if (typeof window.openByokModal === "function") {
         stopThinking();
-        appendChatMessage("system", "Chat needs your Anthropic API key. Opening setup…");
+        appendChatMessage("system", "Chat needs your LLM API key (Anthropic or Gemini). Opening setup…");
         window.openByokModal();
         return;
       } else {
         stopThinking();
-        appendChatMessage("system", "Anthropic API key required (sk-ant-...). Set it via the Activate button.");
+        appendChatMessage("system", "API key required (sk-ant-... for Anthropic, AIza... for Gemini). Set it via the Activate button.");
         return;
       }
     }
