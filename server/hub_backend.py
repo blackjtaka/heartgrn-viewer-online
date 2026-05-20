@@ -74,8 +74,9 @@ AG1_VARIANT_RE = re.compile(r"^(?:chr)?([0-9XYM]+)_(\d+)_([ACGT]+)_([ACGT]+)$")
 ALLOWED_ORIGINS = tuple(filter(None, [
     "http://localhost:8765", "http://127.0.0.1:8765",
     "http://localhost:8000", "http://127.0.0.1:8000",
-    os.environ.get("CF_PAGES_ORIGIN"),                              # e.g. https://heartgrn.pages.dev
-    os.environ.get("CUSTOM_ORIGIN"),                                # e.g. https://heartgrn.app
+    os.environ.get("ALLOWED_ORIGIN"),                               # primary deploy URL (e.g. https://178-105-162-190.nip.io)
+    os.environ.get("CF_PAGES_ORIGIN"),                              # legacy: Cloudflare Pages URL
+    os.environ.get("CUSTOM_ORIGIN"),                                # additional custom origin
 ]))
 
 NCBI_ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
