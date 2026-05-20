@@ -385,6 +385,34 @@ code {
   text-decoration: underline;
 }
 
+.ag1-figure-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 8px;
+}
+.ag1-figure-btn {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text);
+}
+.ag1-figure-btn:hover {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+}
+.ag1-img {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+
 /* --- chat panel --- */
 .chat-panel {
   position: fixed; top: 20px; left: 20px; width: 360px;

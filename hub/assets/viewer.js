@@ -2825,11 +2825,45 @@
       <div class="meta">CSV: ${csvLink(status.atac_csv)} · ${csvLink(status.rna_csv)}</div>
       ${renderTable(atac, "ATAC", "atac")}
       ${renderTable(rna,  "RNA",  "rna")}
-      <div class="meta" style="margin-top:8px">
-        <b>Beta:</b> on-demand REF/ALT/Δ track rendering is disabled in this preview.
-        Pre-rendered figures (if any) are available via the CSV link directory above.
-      </div>
+      <div class="ag1-section"><b>REF / ALT / Δ track</b></div>
+      ${renderFigureButtons(status.figures || [])}
+      <div id="ag1-render-out"></div>
     `;
+    // Wire figure-button clicks: show the PNG inline + a download link.
+    body.querySelectorAll(".ag1-figure-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const png = btn.dataset.png;
+        const label = btn.dataset.label;
+        const out = $("ag1-render-out");
+        out.innerHTML = `
+          <div class="meta" style="margin:6px 0">
+            <b>${label}</b> · <a target="_blank" href="${HUB_BASE}/${png}">open PNG</a>
+          </div>
+          <img src="${HUB_BASE}/${png}" class="ag1-img" alt="${label}">
+        `;
+      });
+    });
+  }
+
+  function renderFigureButtons(figs) {
+    if (!figs.length) {
+      return `<div class="meta" style="margin:6px 0">
+        <b>Beta:</b> no pre-rendered tracks for this variant yet. Tables above
+        capture the per-cell-state effect; track-level REF/ALT/Δ plots are
+        added per variant as the catalog grows.
+      </div>`;
+    }
+    const btns = figs.map((f) => {
+      const label = `${f.cell_state} · ${(f.window / 1000).toFixed(0)} kb`;
+      return `<button class="ag1-figure-btn" data-png="${f.png_url}" data-label="${label}">
+        ${label}
+      </button>`;
+    }).join("");
+    return `<div class="meta" style="margin:6px 0">
+      ${figs.length} pre-rendered track${figs.length === 1 ? "" : "s"} available
+      (click to view):
+    </div>
+    <div class="ag1-figure-btn-row">${btns}</div>`;
   }
 
   // ---------- bootstrap ----------

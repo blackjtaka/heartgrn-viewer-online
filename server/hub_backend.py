@@ -1241,6 +1241,23 @@ class LitHandler(BaseHTTPRequestHandler):
                         log.info("ag1 re-summarised %s (top→%d/%d)", variant_id,
                                  status["atac"].get("n_rows", 0),
                                  status["rna"].get("n_rows", 0))
+                # Attach the list of pre-rendered REF/ALT/Δ tracks (PNGs) so
+                # the frontend can offer them as plot buttons in beta mode.
+                # Filename convention: {variant_id}_{cell_state}_w{window}.png
+                out_dir = _ag1_dir_for(self.hub_dir, variant_id)
+                fig_re = re.compile(rf"^{re.escape(variant_id)}_(.+)_w(\d+)\.png$")
+                figs = []
+                if out_dir.exists():
+                    for png in sorted(out_dir.glob(f"{variant_id}_*.png")):
+                        mm = fig_re.match(png.name)
+                        if not mm:
+                            continue
+                        figs.append({
+                            "cell_state": mm.group(1),
+                            "window": int(mm.group(2)),
+                            "png_url": f"ag1_cache/{variant_id}/{png.name}",
+                        })
+                status["figures"] = figs
             self._json(200, status); return
         # /snp/lookup/<rsid_or_variant_id> — debug helper
         m = re.fullmatch(r"/snp/lookup/(.+)", path)
