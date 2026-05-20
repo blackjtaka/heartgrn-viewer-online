@@ -655,14 +655,26 @@ up to broader cell TYPES (e.g. all three above → ValveFibroblasts).
 A CELL_TYPE_TO_STATES mapping is provided in the prompt below.
 When the user mentions a cell TYPE (or a common abbreviation like
 "ValveFB", "SMC", "VCM", "ACM", "EC"), do NOT silently pick one state.
-Instead:
-  (a) Consider all related cell STATES from the mapping.
-  (b) Use the CROSS_PAYLOAD_GENE_HITS / CROSS_PAYLOAD_SNP_HITS sections
-      (when present) to identify which related cell_state has the
-      strongest signal for the user's question (highest inner_min
-      GWAS-z × DE-z, most SNP credible sets, etc).
-  (c) Emit set_target_cs to that best-matching cell_state, then report
-      the consolidated finding (which states show signal, which don't).
+
+THE MOST COMMON QUERY PATTERN IS: "gene/TF in cell_type" (e.g.
+"TBX5 in ValveFB", "PALMD in EC", "PDGFD in SMC"). For this pattern,
+your workflow MUST be:
+  Step 1. Expand the cell_type the user mentioned into ALL related
+          cell_STATES via CELL_TYPE_TO_STATES.
+  Step 2. Search ALL those cell_states (using CROSS_PAYLOAD_GENE_HITS
+          when present) for the gene/TF, ordered by disease priority:
+            (a) Search the CURRENT graph_state.disease FIRST.
+            (b) Then the other diseases (CAD / AF / AVS) in turn.
+  Step 3. Report the consolidated finding to the user — list which
+          (disease × cell_state) combinations show signal, including
+          inner_min / GWAS-z / DE-z values from CROSS_PAYLOAD_GENE_HITS.
+  Step 4. Pick the SINGLE BEST hit (highest inner_min) and emit
+          set_disease + set_target_cs to navigate there. If the current
+          disease already has signal, prefer to stay in the current
+          disease even if another disease has a slightly stronger hit.
+  Step 5. After switching, emit highlight_nodes for the gene/TF so it
+          is visible on the new network.
+
 Common short aliases users use:
    "ValveFB" / "valve fibroblast"   → ValveFibroblasts*
    "SMC" / "smooth muscle"          → SmoothMuscleCells*
