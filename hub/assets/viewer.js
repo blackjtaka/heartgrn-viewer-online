@@ -2721,28 +2721,38 @@
       renderAg1Result(variantId, rsid, status);
       return;
     }
-    body.innerHTML = `<div class="meta">Variant <code>${variantId}</code> not yet scored.</div>
-      <div class="ag1-warn">⚠ AG1 inference is heavy — about <b>6-8 minutes on CPU</b>. Result is cached.</div>
-      <button class="ag1-start-btn" data-variant="${variantId}">🧬 Start scoring</button>`;
-    body.querySelector(".ag1-start-btn").addEventListener("click", async () => {
-      body.innerHTML = `<div class="ag1-progress">
-          <div class="meta">Spawning AG1 subprocess…</div>
-          <div class="ag1-elapsed" id="ag1-elapsed-${variantId}">0s · est. ~480s</div>
-          <div class="thinking-bar"><div class="thinking-bar-fill" id="ag1-bar-${variantId}"></div></div>
-          <div class="meta" style="margin-top:6px">Will auto-refresh when done. You can close this panel; the run continues in background.</div>
-        </div>`;
-      try {
-        await fetch(`${S.literatureBaseUrl}/ag1/score/${variantId}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
-      } catch (e) {
-        body.innerHTML = `<div class="ag1-warn">Backend unreachable.</div>`;
-        return;
-      }
-      pollAg1(variantId, rsid);
+    // Beta: no on-demand AG1 scoring. Show the list of representative variants
+    // that are pre-cached, and let the user click one to switch panels.
+    const variantLinks = AG1_BETA_VARIANTS.map((v) =>
+      `<li><code class="ag1-variant-link" data-variant="${v}">${v}</code></li>`,
+    ).join("");
+    body.innerHTML = `
+      <div class="meta">Variant <code>${variantId}</code> is not in the beta cache.</div>
+      <div class="ag1-warn">
+        <b>Beta:</b> on-demand AG1 inference is disabled in this preview.
+        AG1 effect predictions are available only for these
+        ${AG1_BETA_VARIANTS.length} representative SNPs:
+      </div>
+      <ul class="ag1-variant-list">${variantLinks}</ul>
+      <div class="meta">Click a variant ID above to inspect its cached AG1 result.</div>
+    `;
+    body.querySelectorAll(".ag1-variant-link").forEach((el) => {
+      el.addEventListener("click", () => {
+        const v = el.dataset.variant;
+        openAg1Panel(v, v);   // rsid unknown for non-graph variants; show ID
+      });
     });
   }
+
+  // Representative SNPs with pre-cached AG1 results in this beta preview.
+  // Keep in sync with /opt/heartgrn/hub/ag1_cache/ on the server.
+  const AG1_BETA_VARIANTS = [
+    "1_56530519_T_C", "1_150558904_T_C", "1_201903136_C_T",
+    "2_203520399_G_A", "2_217818431_A_G", "2_219434819_G_T",
+    "3_38582643_A_C", "3_38583351_C_T", "3_194579238_G_T",
+    "4_110637255_G_C", "7_101126257_A_G", "8_30423317_G_A",
+    "12_55698884_C_T", "13_110388334_G_A", "20_64080106_C_T",
+  ];
 
   function pollAg1(variantId, rsid) {
     if (_ag1Polls.has(variantId)) return;
@@ -2809,49 +2819,11 @@
       <div class="meta">CSV: ${csvLink(status.atac_csv)} · ${csvLink(status.rna_csv)}</div>
       ${renderTable(atac, "ATAC", "atac")}
       ${renderTable(rna,  "RNA",  "rna")}
-      <div class="ag1-section"><b>REF / ALT / Δ track</b></div>
-      <div class="control">
-        <label>Cell states <span class="meta">(Cmd/Ctrl+click for multiple)</span></label>
-        <input id="ag1-cs-filter" type="text" placeholder="filter…" style="margin-bottom:4px">
-        <select id="ag1-cs-input" multiple size="9" style="height:auto;width:100%"></select>
-        <div class="meta" id="ag1-cs-count" style="margin-top:2px"></div>
+      <div class="meta" style="margin-top:8px">
+        <b>Beta:</b> on-demand REF/ALT/Δ track rendering is disabled in this preview.
+        Pre-rendered figures (if any) are available via the CSV link directory above.
       </div>
-      <div class="control">
-        <label>Window (bp)</label>
-        <input id="ag1-window-input" type="number" value="400000" step="50000" min="50000" max="1500000">
-      </div>
-      <button class="ag1-render-btn" data-variant="${variantId}">Render track →</button>
-      <div id="ag1-render-out"></div>
     `;
-    // Populate cell-state multi-select grouped by cell_type + wire filter
-    populateAg1CsSelect();
-    _ag1WireSelectHandlers();
-    body.querySelector(".ag1-render-btn").addEventListener("click", async () => {
-      const sel = $("ag1-cs-input");
-      const cs = Array.from(sel.selectedOptions).map((o) => o.value);
-      if (!cs.length) {
-        $("ag1-render-out").innerHTML = `<div class="ag1-warn">Pick at least one cell state.</div>`;
-        return;
-      }
-      const win = parseInt($("ag1-window-input").value || 400000);
-      const out = $("ag1-render-out");
-      out.innerHTML = `<div class="meta">Rendering (will take ~10-30 s)…</div>`;
-      try {
-        const r = await fetch(`${S.literatureBaseUrl}/ag1/render/${variantId}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cell_states: cs, window: win }),
-        });
-        const data = await r.json();
-        if (data.error) {
-          out.innerHTML = `<div class="ag1-warn">Render error: ${data.error}</div>`;
-          return;
-        }
-        out.innerHTML = `<div><a target="_blank" href="${HUB_BASE}/${data.png}">${data.png.split('/').pop()}</a></div>
-          <img src="${HUB_BASE}/${data.png}?t=${Date.now()}" class="ag1-img" alt="track">`;
-      } catch (e) {
-        out.innerHTML = `<div class="ag1-warn">Backend unreachable.</div>`;
-      }
-    });
   }
 
   // ---------- bootstrap ----------

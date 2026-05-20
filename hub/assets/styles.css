@@ -365,6 +365,26 @@ code {
   100% { transform: translateX(380%); }
 }
 
+.ag1-variant-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+}
+.ag1-variant-list code {
+  cursor: pointer;
+  color: var(--accent, #2563eb);
+  font-size: 11.5px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.ag1-variant-list code:hover {
+  background: rgba(37, 99, 235, 0.08);
+  text-decoration: underline;
+}
+
 /* --- chat panel --- */
 .chat-panel {
   position: fixed; top: 20px; left: 20px; width: 360px;

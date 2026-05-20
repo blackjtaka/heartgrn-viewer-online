@@ -1291,49 +1291,23 @@ class LitHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
 
-        # /ag1/score/<variant_id> — kick off score subprocess (or return cache)
+        # /ag1/score|render/<variant_id> — disabled in beta deployment.
+        # On-demand AG1 inference requires the AG1 Python script (only present
+        # on the developer's local workstation), so neither score nor render
+        # can run server-side. Cached AG1 results stay queryable via GET
+        # /ag1/status/<variant_id>.
         m = re.fullmatch(r"/ag1/(score|render)/(.+)", path)
         if m:
             action, variant_id = m.group(1), m.group(2)
-            if not AG1_VARIANT_RE.match(variant_id):
-                self._json(400, {"error": f"bad variant_id format: {variant_id}"}); return
-            length = int(self.headers.get("Content-Length", 0))
-            raw = self.rfile.read(length) if length else b""
-            try:
-                body = json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                body = {}
-
-            if action == "score":
-                status = _read_json_safe(_ag1_status_path(self.hub_dir, variant_id)) or {}
-                if status.get("status") == "done" and not body.get("force"):
-                    self._json(200, {"cached": True, **status}); return
-                if status.get("status") == "running":
-                    self._json(202, {"status": "running", **status}); return
-                # Acquire per-variant lock + spawn background thread
-                with _ag1_locks_guard:
-                    lock = _ag1_locks.setdefault(variant_id, threading.Lock())
-                if not lock.acquire(blocking=False):
-                    self._json(202, {"status": "running"}); return
-                _ag1_write_status(self.hub_dir, variant_id, status="running",
-                                   started_at=__import__("datetime").datetime.utcnow().isoformat() + "Z")
-                def _runner():
-                    try:
-                        _ag1_score_subprocess(self.hub_dir, variant_id)
-                    finally:
-                        lock.release()
-                threading.Thread(target=_runner, daemon=True).start()
-                self._json(202, {"status": "running",
-                                 "estimated_seconds": 480,
-                                 "variant_id": variant_id}); return
-
-            # action == "render"
-            cell_states = body.get("cell_states") or []
-            if not cell_states:
-                self._json(400, {"error": "cell_states list required"}); return
-            window = int(body.get("window", 400000))
-            res = _ag1_render_subprocess(self.hub_dir, variant_id, cell_states, window)
-            self._json(200, {"variant_id": variant_id, **res}); return
+            self._json(503, {
+                "error": "ag1_disabled_in_beta",
+                "action": action,
+                "variant_id": variant_id,
+                "message": ("AG1 on-demand inference is disabled in this beta. "
+                            "Only the pre-cached representative variants under "
+                            "hub/ag1_cache/ are available, queryable via "
+                            "GET /ag1/status/<variant_id>."),
+            }); return
 
         # /chat: interactive Ask Agent (BYOK — user supplies X-API-Key header)
         if path == "/chat":
