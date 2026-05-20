@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779285406">
+<link rel="stylesheet" href="assets/styles.css?v=1779286412">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -197,6 +197,12 @@
   <div id="side">
     <h1 id="title-label">CardioNavigator</h1>
 
+    <h2>Search graph</h2>
+    <div class="control">
+      <input id="graph-search" type="text" placeholder="🔍 gene / TF / SNP / chrN:start-end" autocomplete="off">
+      <div id="graph-search-results" class="search-results"></div>
+    </div>
+
     <h2>Selection</h2>
     <div class="control">
       <label>Preset</label>
@@ -379,7 +385,7 @@
   <div class="chat-meta" id="chat-meta"></div>
 </div>
 
-<script src="assets/specificity.js?v=1779285406"></script>
-<script src="assets/viewer.js?v=1779285406"></script>
+<script src="assets/specificity.js?v=1779286412"></script>
+<script src="assets/viewer.js?v=1779286412"></script>
 </body>
 </html>

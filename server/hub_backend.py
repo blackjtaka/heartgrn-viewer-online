@@ -377,6 +377,52 @@ def _call_llm_sdk(prompt: str, *, api_key: str, **kwargs) -> str:
     return _call_gemini_sdk(prompt, api_key=api_key, **kwargs)
 
 
+def _stream_llm_sdk(prompt: str, *, api_key: str,
+                     allowed_tools: list[str] | None = None,
+                     timeout: int = 300,
+                     model: str | None = None,
+                     max_tokens: int = 4096):
+    """Yield text chunks from the LLM streaming endpoint. Dispatch by key prefix."""
+    if api_key and api_key.startswith("sk-ant-"):
+        try:
+            from anthropic import Anthropic
+        except ImportError:
+            raise AgentError("anthropic SDK not installed")
+        client = Anthropic(api_key=api_key, timeout=timeout)
+        tools = []
+        if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
+        with client.messages.stream(
+            model=model or "claude-sonnet-4-6",
+            max_tokens=max_tokens,
+            tools=tools or [],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                if text:
+                    yield text
+    else:
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            raise AgentError("google-genai SDK not installed")
+        client = genai.Client(api_key=api_key)
+        tools_arg = []
+        if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
+            tools_arg.append(types.Tool(google_search=types.GoogleSearch()))
+        for chunk in client.models.generate_content_stream(
+            model=model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=max_tokens,
+                tools=tools_arg or None,
+            ),
+        ):
+            if chunk.text:
+                yield chunk.text
+
+
 # Backwards-compat alias for legacy call sites (will be removed after audit).
 def _run_claude(prompt: str, *, api_key: str | None = None,
                 allowed_tools: list[str] | None = None,
@@ -1053,6 +1099,56 @@ def chat_with_agent(message: str, graph_state: dict, history: list,
     return obj
 
 
+def chat_with_agent_stream(message: str, graph_state: dict, history: list,
+                            *, anthropic_api_key: str,
+                            use_websearch: bool = True, timeout: int = 300,
+                            ncbi_api_key: str | None = None,
+                            ncbi_email: str | None = None,
+                            hub_dir: Path | None = None):
+    """Generator: yield (event_name, data_dict) tuples.
+
+    Event sequence:
+      ('chunk', {'text': '...'})    repeated, as LLM tokens arrive
+      ('done',  {full response object})  once at the end
+    """
+    terms = _extract_search_terms(message, graph_state)
+    disease_id = graph_state.get("disease", "")
+    grounding = fetch_grounding_citations(terms, disease_id,
+                                           api_key=ncbi_api_key, email=ncbi_email)
+    log.info("chat-stream grounding: %d citations from %d terms (%s)",
+             len(grounding), len(terms), terms)
+    snp_hits, gene_hits = [], []
+    if hub_dir is not None:
+        snp_hits = lookup_snps_in_message(message, hub_dir,
+                                           current_disease=graph_state.get("disease", ""),
+                                           current_cs=graph_state.get("target_cs", ""))
+        gene_hits = lookup_genes_in_message(message, hub_dir,
+                                              current_disease=graph_state.get("disease", ""),
+                                              current_cs=graph_state.get("target_cs", ""))
+    prompt = build_chat_prompt(message, graph_state, history,
+                                grounding_citations=grounding,
+                                snp_cross_hits=snp_hits,
+                                gene_cross_hits=gene_hits)
+    tools = ["WebSearch"] if use_websearch else None
+    raw_parts = []
+    for chunk in _stream_llm_sdk(prompt, api_key=anthropic_api_key,
+                                  allowed_tools=tools, timeout=timeout):
+        raw_parts.append(chunk)
+        yield ("chunk", {"text": chunk})
+    raw = "".join(raw_parts)
+    obj = _strip_json(raw)
+    if not isinstance(obj, dict):
+        yield ("done", {"message": "(Agent did not return parseable JSON.)",
+                         "actions": [], "citations": [],
+                         "grounding_count": len(grounding), "_raw": raw})
+        return
+    obj["citations"] = verify_citations_in_response(obj, grounding,
+                                                     api_key=ncbi_api_key, email=ncbi_email)
+    obj["grounding_count"] = len(grounding)
+    obj["grounding_terms"] = terms
+    yield ("done", obj)
+
+
 def verify_pmids(citations: list, api_key: str | None = None,
                   email: str | None = None) -> list:
     """Hit esummary for each claimed PMID; mark items as unverified if
@@ -1665,6 +1761,69 @@ class LitHandler(BaseHTTPRequestHandler):
                      graph_state.get("disease", "?"),
                      graph_state.get("target_cs", "?"))
             self._json(200, resp)
+            return
+
+        # POST /chat/stream — same as /chat but returns Server-Sent Events
+        # so the frontend can render text as it arrives. Final 'done' event
+        # carries the post-processed response (verified citations, actions).
+        if path == "/chat/stream":
+            req_origin = self.headers.get("Origin", "").strip()
+            if ALLOWED_ORIGINS and os.environ.get("ALLOW_ANY_ORIGIN") != "1":
+                if not req_origin or req_origin not in ALLOWED_ORIGINS:
+                    self._json(403, {"error": "forbidden_origin"}); return
+            client_ip = (self.headers.get("CF-Connecting-IP")
+                         or (self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or None)
+                         or self.client_address[0])
+            allowed, retry_after = rate_limit_check(client_ip, "/chat")
+            if not allowed:
+                self._json(429, {"error": "rate_limited",
+                                  "message": f"Too many requests; retry after {retry_after}s",
+                                  "retry_after": retry_after}); return
+            user_key = self.headers.get("X-API-Key", "").strip()
+            if not user_key or not (user_key.startswith("sk-ant-") or user_key.startswith("AIza")):
+                self._json(401, {"error": "byok_required",
+                                  "message": "API key must start with 'sk-ant-' or 'AIza'"}); return
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            try:
+                body = json.loads(raw) if raw else {}
+            except json.JSONDecodeError as e:
+                self._json(400, {"error": f"bad json body: {e}"}); return
+            msg = (body.get("message") or "").strip()
+            if not msg:
+                self._json(400, {"error": "empty message"}); return
+            graph_state = body.get("graph_state", {})
+            history = body.get("history", []) or []
+            use_websearch = bool(body.get("use_websearch", True))
+            # SSE headers
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self._set_cors()
+            self.end_headers()
+            try:
+                for event_name, payload in chat_with_agent_stream(
+                        msg, graph_state, history,
+                        anthropic_api_key=user_key,
+                        use_websearch=use_websearch,
+                        ncbi_api_key=self.server.ncbi_api_key,   # type: ignore[attr-defined]
+                        ncbi_email=self.server.ncbi_email,       # type: ignore[attr-defined]
+                        hub_dir=self.hub_dir):
+                    sse = f"event: {event_name}\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
+                    self.wfile.write(sse.encode("utf-8"))
+                    self.wfile.flush()
+            except AgentError as e:
+                err_lower = str(e).lower()
+                code = "auth_failed" if ("auth" in err_lower or "invalid" in err_lower) else \
+                       "rate_limited" if ("rate" in err_lower or "limit" in err_lower) else "agent_failed"
+                sse = f"event: error\ndata: {json.dumps({'error': code, 'detail': str(e)})}\n\n"
+                try:
+                    self.wfile.write(sse.encode("utf-8")); self.wfile.flush()
+                except Exception:
+                    pass
+            log.info("chat-stream → done")
             return
 
         # POST /citations/credible — user votes a PMID as credible (up) or

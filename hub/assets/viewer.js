@@ -132,6 +132,92 @@
     return JSON.parse(txt);
   }
 
+  // ---------- SSE streaming helper for /chat/stream ----------
+  // Parses Server-Sent Events from the response body, calls onUpdate(text)
+  // for each new partial message, and resolves with the final 'done' payload.
+  // Throws an object with {status, body?, errorPayload?} on HTTP / SSE error.
+  async function fetchChatStreaming(url, options, onUpdate) {
+    const resp = await fetch(url, options);
+    if (!resp.ok) {
+      let body = null;
+      try { body = await resp.json(); } catch { try { body = await resp.text(); } catch {} }
+      throw { status: resp.status, body };
+    }
+    if (!resp.body) throw { status: 0, body: "stream not supported (no resp.body)" };
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buf = "";
+    let raw = "";           // accumulated LLM output bytes (raw JSON)
+    let final = null;       // 'done' event payload
+    let errorPayload = null;
+    let lastShown = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE events end with double-LF
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        let event = "message";
+        let dataStr = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+        }
+        if (event === "chunk") {
+          try {
+            const o = JSON.parse(dataStr);
+            raw += o.text || "";
+            const partial = _extractStreamingMessageField(raw);
+            if (partial !== null && partial !== lastShown) {
+              lastShown = partial;
+              onUpdate && onUpdate(partial);
+            }
+          } catch (_) {}
+        } else if (event === "done") {
+          try { final = JSON.parse(dataStr); } catch (_) {}
+        } else if (event === "error") {
+          try { errorPayload = JSON.parse(dataStr); } catch (_) {}
+        }
+      }
+    }
+    if (errorPayload) throw { status: 0, errorPayload };
+    return final;
+  }
+
+  // Best-effort incremental extractor: pull the value of the "message" key
+  // from a (possibly incomplete) JSON object that the LLM is streaming.
+  function _extractStreamingMessageField(buf) {
+    const m = buf.match(/"message"\s*:\s*"/);
+    if (!m) return null;
+    let i = m.index + m[0].length;
+    let result = "";
+    let escape = false;
+    while (i < buf.length) {
+      const c = buf[i];
+      if (escape) {
+        if (c === "n") result += "\n";
+        else if (c === "t") result += "\t";
+        else if (c === "r") result += "\r";
+        else if (c === "u" && i + 4 < buf.length) {
+          result += String.fromCharCode(parseInt(buf.slice(i + 1, i + 5), 16));
+          i += 4;
+        } else result += c;          // " \ / etc.
+        escape = false;
+      } else if (c === "\\") {
+        escape = true;
+      } else if (c === '"') {
+        return result;                // closed cleanly
+      } else {
+        result += c;
+      }
+      i++;
+    }
+    return result;                     // partial — still streaming
+  }
+
   // ---------- init ----------
   async function init() {
     banner("Loading manifest…");
@@ -1595,6 +1681,57 @@
       }
     });
 
+    // Graph search bar: live-filter cy nodes, click row to zoom + highlight.
+    const gs = $("graph-search");
+    const gsRes = $("graph-search-results");
+    if (gs && gsRes) {
+      const focusOn = (node) => {
+        S.cy.elements().removeClass("chat-highlight");
+        node.addClass("chat-highlight");
+        S.cy.animate({ center: { eles: node }, zoom: Math.max(S.cy.zoom(), 1.4) },
+                     { duration: 320 });
+      };
+      gs.addEventListener("input", (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        gsRes.innerHTML = "";
+        if (!q || q.length < 2 || !S.cy) return;
+        const matches = S.cy.nodes().filter((n) => n.id().toLowerCase().includes(q));
+        if (!matches.length) {
+          gsRes.innerHTML = '<div class="meta" style="padding:3px 0">no matches in current view</div>';
+          return;
+        }
+        matches.slice(0, 12).forEach((n) => {
+          const id = n.id();
+          const kind = n.data("kind") || "node";
+          const row = document.createElement("div");
+          row.className = "search-result-row";
+          row.innerHTML = `<span class="meta">[${kind}]</span> <b>${escapeHtml(id)}</b>`;
+          row.addEventListener("click", () => {
+            focusOn(n);
+            gs.value = id;
+            gsRes.innerHTML = "";
+          });
+          gsRes.appendChild(row);
+        });
+        if (matches.length > 12) {
+          const more = document.createElement("div");
+          more.className = "meta";
+          more.style.padding = "3px 0";
+          more.textContent = `(+${matches.length - 12} more — narrow the query)`;
+          gsRes.appendChild(more);
+        }
+      });
+      gs.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          const first = gsRes.querySelector(".search-result-row");
+          if (first) first.click();
+        } else if (e.key === "Escape") {
+          gs.value = "";
+          gsRes.innerHTML = "";
+        }
+      });
+    }
+
     $("disease-select").addEventListener("change", (e) => selectDisease(e.target.value));
     $("target-cs-select").addEventListener("change", (e) => selectTargetCs(e.target.value));
     $("target-cs-search").addEventListener("input", (e) =>
@@ -2194,8 +2331,12 @@
       }
     }
 
+    let data;
     try {
-      const resp = await fetch(`${S.literatureBaseUrl}/chat`, {
+      // Stream incoming text via SSE so the user sees the message growing
+      // in real time. Replaces the spinner with a live preview as soon as
+      // the first JSON 'message' character arrives.
+      data = await fetchChatStreaming(`${S.literatureBaseUrl}/chat/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2207,26 +2348,37 @@
           history: S.chatHistory.slice(-10),
           use_websearch: true,
         }),
+      }, (partialText) => {
+        // Live-update the thinking bubble with streamed message text.
+        ph.classList.add("chat-streaming");
+        ph.innerHTML = `<div class="streamed-text">${escapeHtml(partialText)}</div>`;
+        body.scrollTop = body.scrollHeight;
       });
-      if (resp.status === 401) {
-        stopThinking();
-        const data = await resp.json().catch(() => ({}));
-        const why = data.detail || data.message || "Anthropic key was rejected.";
+    } catch (err) {
+      stopThinking();
+      if (err.status === 401) {
+        const why = (err.body && (err.body.detail || err.body.message))
+                    || "API key was rejected.";
         appendChatMessage("system", `🔑 ${why} Re-enter your key.`);
         if (typeof window.openByokModal === "function") window.openByokModal();
-        return;
+      } else if (err.status === 429) {
+        appendChatMessage("system", "⏳ Rate-limited. Wait a minute and try again.");
+      } else if (err.errorPayload) {
+        appendChatMessage("system",
+          `Error: ${err.errorPayload.detail || err.errorPayload.error || "stream failed"}`);
+      } else {
+        const txt = err.body ? (typeof err.body === "string" ? err.body : JSON.stringify(err.body)) : String(err);
+        appendChatMessage("system", `Error ${err.status || ""}: ${txt.slice(0, 200)}`);
       }
-      if (resp.status === 429) {
-        stopThinking();
-        appendChatMessage("system", "⏳ Anthropic rate-limited your key. Wait a minute and try again.");
-        return;
-      }
-      if (!resp.ok) {
-        const txt = await resp.text();
-        appendChatMessage("system", `Error ${resp.status}: ${txt.slice(0, 200)}`);
-        return;
-      }
-      const data = await resp.json();
+      S.chatPending = false; $("chat-send").disabled = false;
+      return;
+    }
+    if (!data) {
+      stopThinking();
+      appendChatMessage("system", "(empty stream)");
+      S.chatPending = false; $("chat-send").disabled = false;
+      return;
+    }
       const msg = data.message || (data._raw ? "(non-JSON response)" : "(empty)");
       const explicitActions = data.actions || [];
 

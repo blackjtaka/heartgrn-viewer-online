@@ -234,6 +234,39 @@ button:active { transform: translateY(0.5px); }
 .cit-vote-up.voted   { background: #d1fae5; color: #047857; border-color: #6ee7b7; }
 .cit-vote-down.voted { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
 
+/* Graph search results dropdown */
+.search-results {
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.search-result-row {
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 12px;
+  border-radius: 3px;
+  line-height: 1.35;
+}
+.search-result-row:hover {
+  background: rgba(37, 99, 235, 0.08);
+}
+.search-result-row .meta {
+  font-size: 10px;
+  margin-right: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Streaming chat bubble (replaces the spinner once text starts arriving) */
+.chat-streaming .thinking-row,
+.chat-streaming .thinking-bar { display: none !important; }
+.chat-streaming .streamed-text {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.92;
+}
+
 .tt-snps { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
 .tt-snp-card {
   padding: 8px 10px; margin: 6px 0;
