@@ -256,6 +256,19 @@ button:active { transform: translateY(0.5px); }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.search-section {
+  margin: 6px 0 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.search-result-row.search-current {
+  background: rgba(16, 185, 129, 0.10);
+  border-left: 3px solid #10b981;
+  padding-left: 4px;
+}
 
 /* Streaming chat bubble (replaces the spinner once text starts arriving) */
 .chat-streaming .thinking-row,

@@ -1681,26 +1681,25 @@
       }
     });
 
-    // Graph search bar: live-filter cy nodes, click row to zoom + highlight.
+    // Graph search bar: live-filter cy nodes + cross-payload fallback.
+    // - Local hits: click → zoom + highlight on the current network.
+    // - Other-disease / other-cs hits: click → switch payload via
+    //   selectDisease + selectTargetCs so the user lands on that view.
     const gs = $("graph-search");
     const gsRes = $("graph-search-results");
     if (gs && gsRes) {
+      let xpSeq = 0;        // debounce token for cross-payload fetches
       const focusOn = (node) => {
         S.cy.elements().removeClass("chat-highlight");
         node.addClass("chat-highlight");
         S.cy.animate({ center: { eles: node }, zoom: Math.max(S.cy.zoom(), 1.4) },
                      { duration: 320 });
       };
-      gs.addEventListener("input", (e) => {
-        const q = e.target.value.trim().toLowerCase();
-        gsRes.innerHTML = "";
-        if (!q || q.length < 2 || !S.cy) return;
-        const matches = S.cy.nodes().filter((n) => n.id().toLowerCase().includes(q));
-        if (!matches.length) {
-          gsRes.innerHTML = '<div class="meta" style="padding:3px 0">no matches in current view</div>';
-          return;
-        }
-        matches.slice(0, 12).forEach((n) => {
+      const renderLocalMatches = (q, matches) => {
+        if (!matches.length) return null;
+        const wrap = document.createElement("div");
+        wrap.innerHTML = `<div class="search-section">In current view (${matches.length})</div>`;
+        matches.slice(0, 8).forEach((n) => {
           const id = n.id();
           const kind = n.data("kind") || "node";
           const row = document.createElement("div");
@@ -1711,14 +1710,91 @@
             gs.value = id;
             gsRes.innerHTML = "";
           });
-          gsRes.appendChild(row);
+          wrap.appendChild(row);
         });
-        if (matches.length > 12) {
+        if (matches.length > 8) {
           const more = document.createElement("div");
-          more.className = "meta";
-          more.style.padding = "3px 0";
-          more.textContent = `(+${matches.length - 12} more — narrow the query)`;
-          gsRes.appendChild(more);
+          more.className = "meta"; more.style.padding = "2px 0";
+          more.textContent = `(+${matches.length - 8} more in view)`;
+          wrap.appendChild(more);
+        }
+        return wrap;
+      };
+      const renderCrossPayloadHits = (sym, rows) => {
+        if (!rows.length) return null;
+        const wrap = document.createElement("div");
+        const curDisease = S.diseaseId || "";
+        const curCs = S.targetCs || "";
+        // Sort: current disease first, then by target_de_z desc.
+        rows.sort((a, b) => {
+          const aCur = a.disease === curDisease ? 0 : 1;
+          const bCur = b.disease === curDisease ? 0 : 1;
+          if (aCur !== bCur) return aCur - bCur;
+          return (b.target_de_z ?? -1e18) - (a.target_de_z ?? -1e18);
+        });
+        wrap.innerHTML = `<div class="search-section">Other (disease × cell_state) hits (${rows.length})</div>`;
+        rows.slice(0, 10).forEach((r) => {
+          const role = (r.role || "").toLowerCase();           // "seed" / "tf"
+          const dez = r.target_de_z != null ? Math.round(r.target_de_z) : "?";
+          const isCur = (r.disease === curDisease && r.cs === curCs);
+          const row = document.createElement("div");
+          row.className = "search-result-row" + (isCur ? " search-current" : "");
+          row.innerHTML = `<span class="meta">[${r.disease}/${role}]</span> <b>${escapeHtml(sym)}</b>`
+                       + ` <span class="meta">${escapeHtml(r.cs || "")} · DE-z ${dez}</span>`;
+          row.addEventListener("click", async () => {
+            gs.value = sym; gsRes.innerHTML = "";
+            // Switch disease then target_cs, then highlight when the new
+            // payload is rendered.
+            if (r.disease && r.disease !== S.diseaseId) {
+              await selectDisease(r.disease);
+            }
+            if (r.cs && r.cs !== S.targetCs) {
+              await selectTargetCs(r.cs);
+            }
+            // Try to focus the gene on the new graph.
+            setTimeout(() => {
+              if (!S.cy) return;
+              const n = S.cy.getElementById(sym);
+              if (n.length) focusOn(n);
+            }, 400);
+          });
+          wrap.appendChild(row);
+        });
+        if (rows.length > 10) {
+          const more = document.createElement("div");
+          more.className = "meta"; more.style.padding = "2px 0";
+          more.textContent = `(+${rows.length - 10} more across payloads)`;
+          wrap.appendChild(more);
+        }
+        return wrap;
+      };
+      gs.addEventListener("input", async (e) => {
+        const q = e.target.value.trim();
+        gsRes.innerHTML = "";
+        if (!q || q.length < 2 || !S.cy) return;
+        // Local cy match.
+        const local = S.cy.nodes().filter((n) => n.id().toLowerCase().includes(q.toLowerCase()));
+        const localEl = renderLocalMatches(q, local);
+        if (localEl) gsRes.appendChild(localEl);
+        // Cross-payload (exact symbol — most useful for genes/TFs).
+        const sym = q.toUpperCase();
+        if (/^[A-Z][A-Z0-9-]{1,}$/.test(sym)) {
+          const seq = ++xpSeq;
+          try {
+            const resp = await fetch(`${S.literatureBaseUrl}/gene/lookup/${encodeURIComponent(sym)}`);
+            if (seq !== xpSeq) return;            // newer query started, discard
+            if (resp.ok) {
+              const data = await resp.json();
+              const rows = data.top || [];
+              const xpEl = renderCrossPayloadHits(sym, rows);
+              if (xpEl) gsRes.appendChild(xpEl);
+              else if (!localEl) {
+                gsRes.innerHTML = '<div class="meta" style="padding:3px 0">no hits in current view or cross-payload index</div>';
+              }
+            }
+          } catch (_) {}
+        } else if (!localEl) {
+          gsRes.innerHTML = '<div class="meta" style="padding:3px 0">no matches in current view (use full gene symbol for cross-payload search)</div>';
         }
       });
       gs.addEventListener("keydown", (e) => {
