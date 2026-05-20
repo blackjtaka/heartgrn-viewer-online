@@ -412,16 +412,55 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
         tools_arg = []
         if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
             tools_arg.append(types.Tool(google_search=types.GoogleSearch()))
-        for chunk in client.models.generate_content_stream(
-            model=model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=max_tokens,
-                tools=tools_arg or None,
-            ),
-        ):
-            if chunk.text:
-                yield chunk.text
+        # Try requested model; on 503/UNAVAILABLE fall back to gemini-2.0-flash
+        # (more stable backend) before giving up. Each attempt has its own
+        # token budget; if the first emits any text we don't fall back.
+        candidates = [model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+                      "gemini-2.0-flash"]
+        seen = set()
+        last_err: Exception | None = None
+        for mdl in candidates:
+            if mdl in seen:
+                continue
+            seen.add(mdl)
+            emitted_any = False
+            try:
+                for chunk in client.models.generate_content_stream(
+                    model=mdl,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=max_tokens,
+                        tools=tools_arg or None,
+                    ),
+                ):
+                    if chunk.text:
+                        emitted_any = True
+                        yield chunk.text
+                return                      # ok, stream finished
+            except Exception as e:
+                last_err = e
+                emsg = str(e).lower()
+                if emitted_any:
+                    # Mid-stream failure: re-raise (can't switch mid-flight).
+                    if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
+                        raise AgentError(f"gemini auth failed: {e}")
+                    if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
+                        raise AgentError(f"gemini quota/rate exceeded: {e}")
+                    raise AgentError(f"gemini stream interrupted: {e}")
+                # Pre-stream failure: decide whether to fall back to next model.
+                if "503" in emsg or "unavailable" in emsg or "overloaded" in emsg:
+                    log.warning("gemini %s 503 unavailable, trying next model", mdl)
+                    continue
+                if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
+                    raise AgentError(f"gemini auth failed (check your Google API key): {e}")
+                if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
+                    raise AgentError(f"gemini quota/rate exceeded: {e}")
+                # Unknown error — don't loop, surface it.
+                raise AgentError(f"gemini API error: {e}")
+        # All candidates exhausted with 503.
+        raise AgentError(f"gemini service unavailable (tried {candidates}). "
+                          f"Either retry in a minute or switch to an Anthropic key. "
+                          f"Last error: {last_err}")
 
 
 # Backwards-compat alias for legacy call sites (will be removed after audit).
