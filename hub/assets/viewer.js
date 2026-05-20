@@ -2740,13 +2740,17 @@
           });
           if (af.nonempty()) anchor = af;
         }
-        const fitNodes = primary.union(context).nodes();
-        const padding = anchor.length === 1 ? 200 : 120;
+        // Zoom: focus tightly on the anchor (user's actual subject) rather
+        // than on primary+neighborhood, so a single highlighted gene gets a
+        // real close-up after a disease/cs switch.
+        const fitNodes = anchor.length ? anchor : primary;
+        const padding = anchor.length === 1 ? 140 : 100;
         const w = S.cy.width(), h = S.cy.height();
         const bb = fitNodes.boundingBox({ includeLabels: false });
         const fitZoomW = bb.w > 0 ? (w - 2 * padding) / bb.w : S.cy.zoom();
         const fitZoomH = bb.h > 0 ? (h - 2 * padding) / bb.h : S.cy.zoom();
-        const targetZoom = Math.max(0.3, Math.min(fitZoomW, fitZoomH, 2.5));
+        const ZOOM_MAX = anchor.length === 1 ? 3.5 : 2.5;
+        const targetZoom = Math.max(0.3, Math.min(fitZoomW, fitZoomH, ZOOM_MAX));
         const abb = anchor.boundingBox({ includeLabels: false });
         const px = (abb.x1 + abb.x2) / 2;
         const py = (abb.y1 + abb.y2) / 2;
