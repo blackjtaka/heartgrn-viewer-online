@@ -1015,22 +1015,35 @@
     // attach for fast sync layouts).
     setTimeout(() => {
       if (!S.cy) return;
-      // Re-fit to center the graph bounding box, then pan so the bb center
-      // sits at ~75% horizontal. This shifts the whole network to the right
-      // (= "hub right edge" view) without depending on identifying which node
-      // is the visual hub.
-      S.cy.fit(undefined, 30);
+      // Compact the whole network into the right HALF of the viewport so the
+      // hub sits clearly on the right with empty space on the left.
+      // (Just panning the bbox center to 0.75w wasn't visible because the
+      //  bbox fills the entire viewport after a normal fit().)
+      const PADDING = 30;
+      const RIGHT_FRAC = 0.50;     // graph occupies right 50% of viewport
+      const CENTER_FRAC = 0.75;    // hub (bbox center) at 75% horizontal
       const bb = S.cy.elements().boundingBox();
-      const cxGraph = (bb.x1 + bb.x2) / 2;
-      const cyGraph = (bb.y1 + bb.y2) / 2;
-      const pan = S.cy.pan();
-      const zoom = S.cy.zoom();
-      const cxRendered = cxGraph * zoom + pan.x;
+      const bbW = bb.x2 - bb.x1;
+      const bbH = bb.y2 - bb.y1;
       const w = S.cy.width();
-      const TARGET_FRAC = 0.90;   // 90% horizontal -> "hub at right edge"
-      const dx = (w * TARGET_FRAC) - cxRendered;
-      S.cy.panBy({ x: dx, y: 0 });
-      console.log(`[hub-pan] bbCenter graph=(${cxGraph.toFixed(0)},${cyGraph.toFixed(0)}) rendered=(${cxRendered.toFixed(0)},?) viewportW=${w} dx=${dx.toFixed(0)} -> new renderedX=${(cxRendered + dx).toFixed(0)} (target=${(w * TARGET_FRAC).toFixed(0)})`);
+      const h = S.cy.height();
+      if (bbW <= 0 || bbH <= 0) return;
+      const zoomFit = Math.min(
+        (w * RIGHT_FRAC - 2 * PADDING) / bbW,
+        (h - 2 * PADDING) / bbH,
+      );
+      const bbCx = (bb.x1 + bb.x2) / 2;
+      const bbCy = (bb.y1 + bb.y2) / 2;
+      S.cy.viewport({
+        zoom: zoomFit,
+        pan: {
+          x: w * CENTER_FRAC - bbCx * zoomFit,
+          y: h * 0.5 - bbCy * zoomFit,
+        },
+      });
+      S.baselineZoom = zoomFit;
+      applyZoomSizing();
+      console.log(`[hub-pan] bb=(${bbW.toFixed(0)}x${bbH.toFixed(0)}) viewport=${w}x${h} zoom=${zoomFit.toFixed(3)} -> hub at renderedX=${(w * CENTER_FRAC).toFixed(0)}, graph width on screen=${(bbW * zoomFit).toFixed(0)}px`);
     }, 0);
   }
 
