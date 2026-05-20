@@ -281,6 +281,49 @@ class AgentError(Exception):
     pass
 
 
+# BYOK keys can appear in provider SDK exception strings (Anthropic, Google).
+# Redact them before surfacing any AgentError text to clients or logs.
+_API_KEY_RE = re.compile(r"(sk-ant-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{20,})")
+
+
+def _scrub_key(s) -> str:
+    """Replace anything that looks like an Anthropic / Google API key with
+    '[redacted-key]'. Apply to every exception we wrap into AgentError so the
+    user's BYOK secret never reaches the SSE/JSON response or journalctl."""
+    try:
+        return _API_KEY_RE.sub("[redacted-key]", str(s))
+    except Exception:
+        return "[unprintable]"
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write content to `path` via a temp file + os.replace so a daemon
+    thread killed mid-flush cannot leave a half-written file that crashes
+    a live read. The replace is atomic on POSIX."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}.{os.urandom(4).hex()}")
+    try:
+        tmp.write_text(content)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try: tmp.unlink()
+            except OSError: pass
+
+
+def _load_json_safe(path: Path) -> dict | None:
+    """Read a JSON file and return its parsed dict, OR None if the file is
+    missing, unreadable, or truncated/corrupt. Used for any cache file that
+    a concurrent writer might be touching."""
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("cache read failed for %s: %s", path, e)
+        return None
+
+
 def _call_anthropic_sdk(prompt: str, *, api_key: str,
                          allowed_tools: list[str] | None = None,
                          timeout: int = 300,
@@ -324,11 +367,11 @@ def _call_anthropic_sdk(prompt: str, *, api_key: str,
             messages=[{"role": "user", "content": prompt}],
         )
     except AuthenticationError as e:
-        raise AgentError(f"anthropic auth failed (check your API key): {e}")
+        raise AgentError(f"anthropic auth failed (check your API key): {_scrub_key(e)}")
     except RateLimitError as e:
-        raise AgentError(f"anthropic rate-limited (your key has hit Anthropic's RPM/TPM cap): {e}")
+        raise AgentError(f"anthropic rate-limited (your key has hit Anthropic's RPM/TPM cap): {_scrub_key(e)}")
     except APIError as e:
-        raise AgentError(f"anthropic API error: {e}")
+        raise AgentError(f"anthropic API error: {_scrub_key(e)}")
 
     text_parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
     return "".join(text_parts).strip()
@@ -377,10 +420,10 @@ def _call_gemini_sdk(prompt: str, *, api_key: str,
     except Exception as e:
         emsg = str(e).lower()
         if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
-            raise AgentError(f"gemini auth failed (check your Google API key): {e}")
+            raise AgentError(f"gemini auth failed (check your Google API key): {_scrub_key(e)}")
         if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
-            raise AgentError(f"gemini quota/rate exceeded: {e}")
-        raise AgentError(f"gemini API error: {e}")
+            raise AgentError(f"gemini quota/rate exceeded: {_scrub_key(e)}")
+        raise AgentError(f"gemini API error: {_scrub_key(e)}")
     return (resp.text or "").strip()
 
 
@@ -455,12 +498,12 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                 "anthropic rate-limited (your Anthropic key hit its per-minute "
                 "input-token cap, typically 30,000/min on Tier 1). "
                 "Wait ~60s and retry, upgrade the Anthropic plan, or switch "
-                f"to a Gemini key in the BYOK panel. Raw: {e}"
+                f"to a Gemini key in the BYOK panel. Raw: {_scrub_key(e)}"
             )
         except AuthenticationError as e:
-            raise AgentError(f"anthropic auth failed (check your API key): {e}")
+            raise AgentError(f"anthropic auth failed (check your API key): {_scrub_key(e)}")
         except APIError as e:
-            raise AgentError(f"anthropic API error: {e}")
+            raise AgentError(f"anthropic API error: {_scrub_key(e)}")
     else:
         try:
             from google import genai
@@ -523,20 +566,20 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                 if emitted_any:
                     # Mid-stream failure: re-raise (can't switch mid-flight).
                     if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
-                        raise AgentError(f"gemini auth failed: {e}")
+                        raise AgentError(f"gemini auth failed: {_scrub_key(e)}")
                     if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
-                        raise AgentError(f"gemini quota/rate exceeded: {e}")
-                    raise AgentError(f"gemini stream interrupted: {e}")
+                        raise AgentError(f"gemini quota/rate exceeded: {_scrub_key(e)}")
+                    raise AgentError(f"gemini stream interrupted: {_scrub_key(e)}")
                 # Pre-stream failure: decide whether to fall back to next model.
                 if "503" in emsg or "unavailable" in emsg or "overloaded" in emsg:
                     log.warning("gemini %s 503 unavailable, trying next model", mdl)
                     continue
                 if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
-                    raise AgentError(f"gemini auth failed (check your Google API key): {e}")
+                    raise AgentError(f"gemini auth failed (check your Google API key): {_scrub_key(e)}")
                 if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
-                    raise AgentError(f"gemini quota/rate exceeded: {e}")
+                    raise AgentError(f"gemini quota/rate exceeded: {_scrub_key(e)}")
                 # Unknown error — don't loop, surface it.
-                raise AgentError(f"gemini API error: {e}")
+                raise AgentError(f"gemini API error: {_scrub_key(e)}")
         # All candidates exhausted with 503.
         raise AgentError(f"gemini service unavailable (tried {candidates}). "
                           f"Either retry in a minute or switch to an Anthropic key. "
@@ -1120,9 +1163,11 @@ def _extract_search_terms(message: str, graph_state: dict, max_terms: int = 6) -
         for n in arr or []:
             nid = n.get("id")
             if nid: node_ids.add(nid)
-    for m in re.finditer(r"\b[A-Z][A-Z0-9-]{1,}\b", message):
-        if m.group(0) in node_ids:
-            _add(m.group(0))
+    # Case-insensitive symbol match (uppercase before checking the index).
+    for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9-]{1,}\b", message):
+        sym = m.group(0).upper()
+        if sym in node_ids:
+            _add(sym)
     return terms[:max_terms]
 
 
@@ -1481,7 +1526,14 @@ def build_snp_index(hub_dir: Path) -> dict:
         idx["n_payloads"] += 1
         # SNPs
         for s in p.get("snps", []) or []:
-            vid = f"{s.get('chr')}_{s.get('pos')}_{s.get('ref')}_{s.get('alt')}"
+            chr_ = s.get("chr"); pos = s.get("pos")
+            ref = s.get("ref"); alt = s.get("alt")
+            # Skip rows with any missing locus field — without this guard the
+            # f-string below produced a literal "None_None_None_None" key that
+            # accumulated every malformed row and polluted cross-payload search.
+            if not (chr_ and pos and ref and alt):
+                continue
+            vid = f"{chr_}_{pos}_{ref}_{alt}"
             rsid = (s.get("rsid") or "").strip()
             entry = {"disease": disease, "cs": cs,
                       "peak": s.get("peak"), "rsid": rsid,
@@ -1541,11 +1593,12 @@ def lookup_genes_in_message(message: str, hub_dir: Path,
             "JSON","API","MHz","TBD","TFs","JACC","PMC","PNAS","NIH","OK",
             "ALL","MeSH","TF","FDR","HGNC","GTEx","VEP","UTR","CDS","EUR",
             "EAS","AFR","SD","CI","HR","BP","UK","LD","PIP"}
-    sym_re = re.compile(r"\b([A-Z][A-Z0-9-]{1,})\b")
+    # Case-insensitive match so "tbx5" / "Tbx5" / "TBX5" all hit the index.
+    sym_re = re.compile(r"\b([A-Za-z][A-Za-z0-9-]{1,})\b")
     seen: set[str] = set()
     hits: list[dict] = []
     for m in sym_re.finditer(message):
-        sym = m.group(1)
+        sym = m.group(1).upper()
         if sym in seen or sym in SKIP or len(sym) < 3:
             continue
         seen.add(sym)
@@ -1858,13 +1911,7 @@ def _curated_path(pmid: str) -> Path:
 
 
 def _load_curated(pmid: str) -> dict | None:
-    p = _curated_path(pmid)
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
+    return _load_json_safe(_curated_path(pmid))
 
 
 def _fetch_pubmed_abstract(pmid: str, *, api_key: str | None = None,
@@ -1938,7 +1985,7 @@ def _summarize_and_persist(pmid: str, citation_meta: dict, context: dict,
         "context": context,
     }
     try:
-        _curated_path(pmid).write_text(json.dumps(entry, indent=2))
+        _atomic_write_text(_curated_path(pmid), json.dumps(entry, indent=2))
         log.info("curated knowledge saved PMID=%s len(summary)=%d kf=%d",
                   pmid, len(summary), len(entry["key_findings"]))
     except OSError as e:
@@ -1946,19 +1993,27 @@ def _summarize_and_persist(pmid: str, citation_meta: dict, context: dict,
 
 
 def _credible_confidence(up: int, down: int, recurrence: int = 0) -> str:
-    """Combine user up/down votes + agent recurrence into a confidence band:
-       flagged → users have net-down-voted (don't trust)
-       high    → up - down >= 2, or recurrence >= 3
-       medium  → up - down == 1, or recurrence == 2
-       low     → no votes, single agent cite
+    """Confidence band. HUMAN VOTES are the gatekeeper for 'high' — agent
+    recurrence alone cannot promote a PMID to high.
+
+       flagged → users net-down-voted (down > up)
+       high    → human net up-votes >= 2  (recurrence is NOT sufficient
+                                            because a deterministic LLM can
+                                            cycle a PMID across context-
+                                            matched chats without any human
+                                            signal; Codex flagged this as a
+                                            gameable path that silently
+                                            leaks into next chat's grounding)
+       medium  → net == 1, or recurrence >= 2
+       low     → otherwise (no votes, single agent cite)
     """
     up = int(up or 0); down = int(down or 0); recurrence = int(recurrence or 0)
     if down > up:
         return "flagged"
     net = up - down
-    if net >= 2 or recurrence >= 3:
+    if net >= 2:
         return "high"
-    if net == 1 or recurrence == 2:
+    if net == 1 or recurrence >= 2:
         return "medium"
     return "low"
 
@@ -2504,7 +2559,10 @@ class LitHandler(BaseHTTPRequestHandler):
         context_extra = f"{ctx.get('disease','')}__{ctx.get('target_cs','')}__{mode}"
         cp = cache_path(self.hub_dir, type_, key, context_extra)
         if cp.exists() and not force:
-            self._json(200, {"cached": True, **json.loads(cp.read_text())}); return
+            cached_blob = _load_json_safe(cp)
+            if cached_blob is not None:
+                self._json(200, {"cached": True, **cached_blob}); return
+            # corrupt/truncated cache → fall through to a fresh build
 
         if mode == "agent":
             # BYOK required for LLM-driven literature search
@@ -2530,8 +2588,7 @@ class LitHandler(BaseHTTPRequestHandler):
                 "agent_raw": agent_out.get("_raw") if isinstance(agent_out, dict) and agent_out.get("_parse_error") else None,
                 "ts": __import__("datetime").datetime.utcnow().isoformat() + "Z",
             }
-            cp.parent.mkdir(parents=True, exist_ok=True)
-            cp.write_text(json.dumps(entry, indent=2))
+            _atomic_write_text(cp, json.dumps(entry, indent=2))
             n_verified = sum(1 for c in verified if c.get("verified"))
             log.info("agent → %s (%d cit, %d verified)",
                      cp.relative_to(self.hub_dir), len(verified), n_verified)
@@ -2625,9 +2682,8 @@ class LitHandler(BaseHTTPRequestHandler):
                     entry["agent_summary"] = agent_out.get("summary") if isinstance(agent_out, dict) else None
                     entry["agent_broader"] = agent_out.get("broader_context") if isinstance(agent_out, dict) else None
                 except AgentError as e:
-                    entry["agent_error"] = str(e)
-        cp.parent.mkdir(parents=True, exist_ok=True)
-        cp.write_text(json.dumps(entry, indent=2))
+                    entry["agent_error"] = _scrub_key(e)
+        _atomic_write_text(cp, json.dumps(entry, indent=2))
         log.info("→ %s (PubMed %d, Europe PMC extra %d)",
                  cp.relative_to(self.hub_dir),
                  len(pm["citations"]), len(extra_epmc))
