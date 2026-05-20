@@ -1852,6 +1852,18 @@ class LitHandler(BaseHTTPRequestHandler):
                     self.wfile.write(sse.encode("utf-8")); self.wfile.flush()
                 except Exception:
                     pass
+            except Exception as e:
+                # Any non-AgentError exception (network blip, NCBI timeout,
+                # serialization error, etc.) — surface it as an SSE error
+                # event so the client doesn't just see an empty stream.
+                import traceback
+                log.error("chat-stream unexpected error: %s\n%s",
+                          e, traceback.format_exc())
+                sse = f"event: error\ndata: {json.dumps({'error': 'server_error', 'detail': str(e)[:300]})}\n\n"
+                try:
+                    self.wfile.write(sse.encode("utf-8")); self.wfile.flush()
+                except Exception:
+                    pass
             log.info("chat-stream → done")
             return
 

@@ -2487,26 +2487,47 @@
         if (a.type === "set_target_cs") explicitTargetCs = a.args?.cs;
       }
 
-      // Pass 1b — DEFENSIVE FALLBACK: if the agent's message says
-      //   "(switched to D / CS)" or "Switched to D / CS"
-      // but didn't include matching actions (Gemini sometimes drops them),
-      // parse the prose and inject set_disease + set_target_cs.
-      if (!explicitDisease && !explicitTargetCs && data.message) {
-        const m = data.message.match(/switched\s*(?:view\s*)?(?:to|view\s*to)\s+([A-Za-z]{2,4})\s*\/\s*([A-Za-z0-9_]+)/i);
+      // Pass 1b — DEFENSIVE FALLBACK: if the agent's message announces a
+      // switch ("switched to D / CS", "navigated to D / CS", "...AF /
+      // MyocardialSleeveCells") but didn't include the matching actions
+      // (Gemini in particular sometimes drops them), parse the prose and
+      // inject the missing set_disease / set_target_cs entries.
+      if (data.message) {
+        const proseRe = /(?:switched|navigated|moved|setting|changing|set)\s*(?:view\s*)?(?:to|view\s*to)?\s+([A-Za-z]{2,4})\s*[\/·\-]\s*([A-Za-z0-9_]+)/i;
+        const m = data.message.match(proseRe);
+        console.log("[prose-fallback]",
+                    "tail=", data.message.slice(-150),
+                    "match=", m,
+                    "explicitDisease=", explicitDisease,
+                    "explicitTargetCs=", explicitTargetCs);
         if (m) {
           const proseDisease = m[1].toUpperCase();
           const proseCs = m[2];
-          if (S.manifest?.diseases?.[proseDisease] && proseDisease !== S.diseaseId) {
+          const targetDisease = explicitDisease || proseDisease;
+          if (!explicitDisease
+              && S.manifest?.diseases?.[proseDisease]
+              && proseDisease !== S.diseaseId) {
             explicitActions.unshift({ type: "set_disease",
-                                       args: { disease: proseDisease }, _auto: "prose" });
+                                       args: { disease: proseDisease },
+                                       _auto: "prose" });
             explicitDisease = proseDisease;
+            console.log("[prose-fallback] injected set_disease", proseDisease);
           }
-          const validCs = S.manifest?.diseases?.[proseDisease || S.diseaseId]?.target_cs_list || [];
-          const csMatch = validCs.find((c) => c.toLowerCase() === proseCs.toLowerCase());
-          if (csMatch && csMatch !== S.targetCs) {
-            explicitActions.push({ type: "set_target_cs",
-                                    args: { cs: csMatch }, _auto: "prose" });
-            explicitTargetCs = csMatch;
+          if (!explicitTargetCs) {
+            const validCs = S.manifest?.diseases?.[targetDisease]?.target_cs_list || [];
+            const csMatch = validCs.find((c) => c.toLowerCase() === proseCs.toLowerCase());
+            console.log("[prose-fallback] cs lookup",
+                        "proseCs=", proseCs,
+                        "validCs.len=", validCs.length,
+                        "csMatch=", csMatch,
+                        "S.targetCs=", S.targetCs);
+            if (csMatch && csMatch !== S.targetCs) {
+              explicitActions.push({ type: "set_target_cs",
+                                      args: { cs: csMatch },
+                                      _auto: "prose" });
+              explicitTargetCs = csMatch;
+              console.log("[prose-fallback] injected set_target_cs", csMatch);
+            }
           }
         }
       }
