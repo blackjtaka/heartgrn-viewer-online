@@ -1015,31 +1015,21 @@
     // attach for fast sync layouts).
     setTimeout(() => {
       if (!S.cy) return;
-      // Re-fit to be safe, then move the concentric center to ~75% horizontal.
+      // Re-fit to center the graph bounding box, then pan so the bb center
+      // sits at ~75% horizontal. This shifts the whole network to the right
+      // (= "hub right edge" view) without depending on identifying which node
+      // is the visual hub.
       S.cy.fit(undefined, 30);
-      let hubNode = null;
-      let minDistSq = Infinity;
-      S.cy.nodes('node[kind = "gene"]').forEach((n) => {
-        const p = n.position();
-        const dsq = p.x * p.x + p.y * p.y;
-        if (dsq < minDistSq) { minDistSq = dsq; hubNode = n; }
-      });
-      if (!hubNode) {
-        S.cy.nodes().forEach((n) => {
-          const p = n.position();
-          const dsq = p.x * p.x + p.y * p.y;
-          if (dsq < minDistSq) { minDistSq = dsq; hubNode = n; }
-        });
-      }
-      if (!hubNode) {
-        console.log("[hub-pan] no node found, skipping");
-        return;
-      }
-      const rp = hubNode.renderedPosition();
+      const bb = S.cy.elements().boundingBox();
+      const cxGraph = (bb.x1 + bb.x2) / 2;
+      const cyGraph = (bb.y1 + bb.y2) / 2;
+      const pan = S.cy.pan();
+      const zoom = S.cy.zoom();
+      const cxRendered = cxGraph * zoom + pan.x;
       const w = S.cy.width();
-      const dx = (w * 0.75) - rp.x;
+      const dx = (w * 0.75) - cxRendered;
       S.cy.panBy({ x: dx, y: 0 });
-      console.log(`[hub-pan] hub=${hubNode.id()} kind=${hubNode.data("kind")} graphPos=(${hubNode.position().x.toFixed(0)},${hubNode.position().y.toFixed(0)}) renderedX=${rp.x.toFixed(0)} viewportW=${w} dx=${dx.toFixed(0)} -> new renderedX=${(rp.x + dx).toFixed(0)}`);
+      console.log(`[hub-pan] bbCenter graph=(${cxGraph.toFixed(0)},${cyGraph.toFixed(0)}) rendered=(${cxRendered.toFixed(0)},?) viewportW=${w} dx=${dx.toFixed(0)} -> new renderedX=${(cxRendered + dx).toFixed(0)} (target=${(w * 0.75).toFixed(0)})`);
     }, 0);
   }
 
