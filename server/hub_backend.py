@@ -605,13 +605,17 @@ def _strip_json(text: str) -> dict | list | None:
     """
     if not text:
         return None
-    # markdown fence?
-    fenced = re.search(r"```(?:json)?\s*([\[\{].*?[\]\}])\s*```", text, re.S)
-    if fenced:
+    # Strip markdown code fences if the whole response is wrapped in them.
+    # Gemini in particular frequently wraps JSON in ```json ... ``` and the
+    # previous non-greedy regex broke on JSON containing nested ] or }.
+    fence_strip = re.sub(r"^\s*```(?:json|JSON)?\s*\n?", "", text)
+    fence_strip = re.sub(r"\n?\s*```\s*$", "", fence_strip)
+    if fence_strip != text:
+        # Fenced response: try parsing the stripped body directly first.
         try:
-            return json.loads(fenced.group(1))
+            return json.loads(fence_strip.strip())
         except json.JSONDecodeError:
-            pass
+            text = fence_strip   # fall through to bracket counter
 
     for start in range(len(text)):
         open_ch = text[start]
@@ -1949,7 +1953,11 @@ def _summarize_and_persist(pmid: str, citation_meta: dict, context: dict,
         "network research context in 3-4 sentences. Focus on: the key biological "
         "finding, the gene(s) / variant(s) involved, the cell type or tissue, and "
         "the clinical relevance to cardiovascular disease. Then list 3-5 short "
-        "bullet 'key findings' (≤ 14 words each). Output JSON only, no prose:\n"
+        "bullet 'key findings' (≤ 14 words each).\n\n"
+        "OUTPUT FORMAT — strict: emit a RAW JSON object, nothing else. "
+        "Do NOT wrap it in ```json … ``` or any other markdown fences. "
+        "Do NOT add a preamble (`Here is the summary:`) or trailing prose. "
+        "First character of your response must be `{` and last must be `}`.\n"
         '{"summary": "...", "key_findings": ["...", "..."]}\n\n'
         f"PMID: {pmid}\n"
         f"Title: {citation_meta.get('title','')}\n"
@@ -1957,14 +1965,16 @@ def _summarize_and_persist(pmid: str, citation_meta: dict, context: dict,
         f"Abstract:\n{abstract[:7000]}"
     )
     try:
-        raw = _call_llm_sdk(prompt, api_key=api_key, max_tokens=700, timeout=90)
+        # 1500 tokens gives ample headroom; Gemini in particular emits
+        # verbose JSON with markdown fences that ate budget at 700.
+        raw = _call_llm_sdk(prompt, api_key=api_key, max_tokens=1500, timeout=90)
     except Exception as e:
         log.warning("curate summarize LLM call failed PMID=%s: %s", pmid, e)
         return
     parsed = _strip_json(raw)
     if not isinstance(parsed, dict):
-        log.warning("curate summary unparseable for PMID=%s; raw head=%r",
-                     pmid, (raw or "")[:200])
+        log.warning("curate summary unparseable for PMID=%s; raw_len=%d head=%r tail=%r",
+                     pmid, len(raw or ""), (raw or "")[:400], (raw or "")[-200:])
         return
     summary = (parsed.get("summary") or "").strip()
     key_findings = parsed.get("key_findings") or []
