@@ -14,7 +14,7 @@ Coverage today:
 
 - **3 diseases**: atrial fibrillation (AF), coronary artery disease (CAD),
   aortic valve stenosis (AVS)
-- **~50 cell types / cell states per disease** — atrial cardiomyocytes,
+- **65 cell states per disease** — atrial cardiomyocytes,
   endothelial cells (arterial / venous / capillary subsets), fibroblasts,
   valve interstitial cells, immune cell subsets, conduction system, etc.
 - **PubMed-grounded chat agent** that can answer questions about the

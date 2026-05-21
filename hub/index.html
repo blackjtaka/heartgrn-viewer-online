@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779361634">
+<link rel="stylesheet" href="assets/styles.css?v=1779363073">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -260,7 +260,7 @@
     <div class="control">
       <label>Compare target_cs vs</label>
       <select id="ref-mode">
-        <option value="all">All other cell_states (default, n=59)</option>
+        <option value="all">All other cell_states (default, n=64)</option>
         <option value="selected">Selected cell_states ▼</option>
       </select>
     </div>
@@ -410,7 +410,7 @@
     <div class="help-body" data-pane="quickstart">
       <ol>
         <li><b>Pick a disease and cell state</b> from the top selectors
-          (AF / CAD / AVS × ~50 cell types each).</li>
+          (AF / CAD / AVS × 65 cell states each).</li>
         <li><b>Read the graph</b>: outer ring = seed genes (GWAS-prioritised),
           middle ring = ATAC peaks (regulatory regions), inner ring = TFs.
           Edges go TF → peak → gene.</li>
@@ -551,7 +551,7 @@
   </div>
 </div>
 
-<script src="assets/specificity.js?v=1779361634"></script>
-<script src="assets/viewer.js?v=1779361634"></script>
+<script src="assets/specificity.js?v=1779363073"></script>
+<script src="assets/viewer.js?v=1779363073"></script>
 </body>
 </html>
