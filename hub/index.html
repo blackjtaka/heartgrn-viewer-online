@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779354984">
+<link rel="stylesheet" href="assets/styles.css?v=1779356529">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -312,6 +312,7 @@
       <button id="rebuild-btn" title="Force rebuild (also runs on parameter change)">Rebuild</button>
       <button id="export-png-btn">Export PNG</button>
       <button id="chat-toggle-btn" title="Open Ask Agent chat panel">💬 Ask Agent</button>
+      <button id="help-btn" title="Open user guide (Quickstart + Concepts)">📖 Help</button>
     </div>
 
     <h2>Color scale (GWAS-z, log10 scaled)</h2>
@@ -385,7 +386,94 @@
   <div class="chat-meta" id="chat-meta"></div>
 </div>
 
-<script src="assets/specificity.js?v=1779354984"></script>
-<script src="assets/viewer.js?v=1779354984"></script>
+<!-- 📖 Help modal — Quickstart + Concepts embed. Full guide in docs/USER_GUIDE.md -->
+<div id="help-overlay" class="help-overlay">
+  <div class="help-card">
+    <button class="help-close" title="Close (Esc)">✕</button>
+    <h2>📖 CardioNav — Quick Help</h2>
+    <div class="help-tabs">
+      <button class="help-tab active" data-tab="quickstart">Quickstart</button>
+      <button class="help-tab" data-tab="concepts">Concepts</button>
+      <button class="help-tab" data-tab="tasks">Tasks</button>
+    </div>
+
+    <div class="help-body" data-pane="quickstart">
+      <ol>
+        <li><b>Pick a disease and cell state</b> from the top selectors
+          (AF / CAD / AVS × ~50 cell types each).</li>
+        <li><b>Read the graph</b>: outer ring = seed genes (GWAS-prioritised),
+          middle ring = ATAC peaks (regulatory regions), inner ring = TFs.
+          Edges go TF → peak → gene.</li>
+        <li><b>Click a SNP / peak</b> to see the credible-set details:
+          rsid, PIP, gnomAD AF, OT study_id, VEP consequence, L2G top gene.</li>
+        <li><b>Set your LLM key</b> via 🔑 (Anthropic <code>sk-ant-…</code>
+          or Gemini <code>AIza…</code>). Stored in your browser only.</li>
+        <li><b>Ask in 💬 chat</b>: questions, view switches
+          ("show TBX5 in atrial cardiomyocytes"), PMID lookups. Citations
+          arrive inline with 🟢/🟡/⚪/🔴 confidence pills.</li>
+      </ol>
+    </div>
+
+    <div class="help-body" data-pane="concepts" hidden>
+      <dl class="help-dl">
+        <dt>eGRN</dt>
+        <dd>Disease + cell-state specific <i>predicted</i> regulatory
+          network (TF → peak → gene). Hypotheses, not experimentally
+          confirmed interactions.</dd>
+
+        <dt>PIP</dt>
+        <dd>Posterior Inclusion Probability — credible-set membership
+          weight <i>within one fine-mapping run</i>.
+          <b>PIP 0.8 ≠ "80% causal"</b>; it means 80% of the posterior in
+          that credible set sits on this SNP. Different studies of the
+          same locus can produce different PIPs — that's why the SNP card
+          shows <code>study_id</code>.</dd>
+
+        <dt>DE-z</dt>
+        <dd>Differential expression Z-score <i>relative to the reference
+          cell state</i> you pick at the top.
+          <b>Not absolute expression.</b> Switch the reference to see how
+          specificity changes.</dd>
+
+        <dt>AlphaGenome (beta)</dt>
+        <dd>Deep-learning regulatory variant-effect prediction. Only 15
+          representative SNPs are pre-computed here. <b>Absent in cache
+          ≠ "no predicted effect"</b> — just "not yet scored".</dd>
+
+        <dt>Confidence pill / Vote-curated knowledge</dt>
+        <dd>🟢 high = ≥ 2 human net up-votes. 🟡 medium = 1 vote or
+          agent recurrence ≥ 2. ⚪ low = no signal yet.
+          🔴 flagged = users down-voted, excluded from grounding.
+          <b>"Verified" badge means PMID exists, NOT that the paper
+          supports the claim.</b> Always read citations before quoting.</dd>
+      </dl>
+    </div>
+
+    <div class="help-body" data-pane="tasks" hidden>
+      <ul class="help-tasks">
+        <li><b>Find TF candidates at a locus</b> → search the seed gene,
+          click it, follow edges inward to peaks → TFs.</li>
+        <li><b>Pivot a SNP across diseases</b> → search by rsid, click the
+          cross-payload hit you want to switch to.</li>
+        <li><b>Test how a gene's specificity depends on reference</b> →
+          switch the reference cell-state dropdown, watch DE-z colour shift.</li>
+        <li><b>Build a literature digest for a claim</b> → ask chat, then
+          👍 the PMIDs you've read. After net ≥ 2 votes, click 📝 Summarize
+          to save the abstract digest as durable prior knowledge for
+          future chats in this context.</li>
+        <li><b>Check AlphaGenome predictions</b> → click 🧬 on a SNP
+          card. If your variant isn't in the beta cache, the panel lists
+          the 15 that are.</li>
+      </ul>
+    </div>
+
+    <div class="help-foot">
+      Full guide: <code>docs/USER_GUIDE.md</code> in the repo · ESC closes
+    </div>
+  </div>
+</div>
+
+<script src="assets/specificity.js?v=1779356529"></script>
+<script src="assets/viewer.js?v=1779356529"></script>
 </body>
 </html>

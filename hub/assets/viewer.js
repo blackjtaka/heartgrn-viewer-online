@@ -3138,6 +3138,32 @@
     $("chat-close-btn").title = min ? "Expand" : "Minimize";
     if (!min) $("chat-input").focus();
   }
+  function wireHelpModal() {
+    const overlay = document.getElementById("help-overlay");
+    if (!overlay) return;
+    const open = () => overlay.classList.add("visible");
+    const close = () => overlay.classList.remove("visible");
+    const btn = document.getElementById("help-btn");
+    if (btn) btn.addEventListener("click", open);
+    overlay.querySelector(".help-close").addEventListener("click", close);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && overlay.classList.contains("visible")) close();
+    });
+    // Tab switching
+    overlay.querySelectorAll(".help-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const want = tab.dataset.tab;
+        overlay.querySelectorAll(".help-tab").forEach(
+          (t) => t.classList.toggle("active", t.dataset.tab === want));
+        overlay.querySelectorAll(".help-body").forEach(
+          (b) => b.toggleAttribute("hidden", b.dataset.pane !== want));
+      });
+    });
+  }
+
   function wireChatPanel() {
     $("chat-toggle-btn").addEventListener("click", () => {
       // Cycle: hidden → expanded → minimized → expanded → ...
@@ -3462,5 +3488,7 @@
   }
 
   // ---------- bootstrap ----------
-  document.addEventListener("DOMContentLoaded", () => { init().then(wireChatPanel); });
+  document.addEventListener("DOMContentLoaded", () => {
+    init().then(() => { wireChatPanel(); wireHelpModal(); });
+  });
 })();
