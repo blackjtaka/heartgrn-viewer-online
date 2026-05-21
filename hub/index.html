@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779360508">
+<link rel="stylesheet" href="assets/styles.css?v=1779360658">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -101,9 +101,9 @@
 
 <div id="top-right-toolbar">
   <button id="help-btn" class="top-right-btn"
-          title="Open user guide (Quickstart + Concepts + Tasks)">📖 User Guide</button>
+          title="Open user guide (Quickstart + Concepts + Tasks)">User Guide</button>
   <button id="activate-agent-btn" class="top-right-btn"
-          style="display:none" onclick="window.openByokModal()">🔑 Activate Agent</button>
+          style="display:none" onclick="window.openByokModal()">Activate Agent</button>
 </div>
 
 <script>
@@ -159,10 +159,10 @@
     if (k && (k.startsWith("sk-ant-") || k.startsWith("AIza"))) {
       btn.classList.add("ok");
       const label = k.startsWith("sk-ant-") ? "Anthropic" : "Gemini";
-      btn.textContent = `🔑 ${label} key set · settings`;
+      btn.textContent = `${label} key set · settings`;
     } else {
       btn.classList.remove("ok");
-      btn.textContent = "🔑 Activate Agent";
+      btn.textContent = "Activate Agent";
     }
   }
   window.openByokModal = function () {
@@ -414,9 +414,10 @@
           Edges go TF → peak → gene.</li>
         <li><b>Click a SNP / peak</b> to see the credible-set details:
           rsid, PIP, gnomAD AF, OT study_id, VEP consequence, L2G top gene.</li>
-        <li><b>Set your LLM key</b> via 🔑 (Anthropic <code>sk-ant-…</code>
-          or Gemini <code>AIza…</code>). Stored in your browser only.</li>
-        <li><b>Ask in 💬 chat</b>: questions, view switches
+        <li><b>Set your LLM key</b> via the <i>Activate Agent</i> button
+          (Anthropic <code>sk-ant-…</code> or Gemini <code>AIza…</code>).
+          Stored in your browser only.</li>
+        <li><b>Ask in the chat panel</b>: questions, view switches
           ("show TBX5 in atrial cardiomyocytes"), PMID lookups. Citations
           arrive inline with 🟢/🟡/⚪/🔴 confidence pills.</li>
       </ol>
@@ -481,7 +482,7 @@
   </div>
 </div>
 
-<script src="assets/specificity.js?v=1779360508"></script>
-<script src="assets/viewer.js?v=1779360508"></script>
+<script src="assets/specificity.js?v=1779360658"></script>
+<script src="assets/viewer.js?v=1779360658"></script>
 </body>
 </html>
