@@ -73,7 +73,7 @@ Concentric layout, three rings:
 | Ring | What it represents |
 |---|---|
 | **Outer** | Seed genes — disease-prioritised by GWAS-z |
-| **Middle** | ATAC peaks — regulatory regions overlapping credible-set SNPs |
+| **Middle** | ATAC peaks — regulatory regions linked to seed genes (a subset overlap credible-set SNPs) |
 | **Inner** | Transcription factors — predicted to bind those peaks |
 
 Edges:
