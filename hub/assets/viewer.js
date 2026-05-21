@@ -1436,7 +1436,7 @@
         openChatAndPrefill(kind, key);
       });
     });
-    // Wire AG1 variant-effect buttons
+    // Wire AlphaGenome variant-effect buttons
     panel.querySelectorAll(".ag1-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         openAg1Panel(btn.dataset.variant, btn.dataset.rsid);
@@ -1720,10 +1720,10 @@
     h += `<div class="tt-lit">`
       + `<button class="ask-agent-btn" data-kind="snp" data-key="${askKey}">💬 Ask agent about ${askKey}</button>`
       + `</div>`;
-    // AG1 variant-effect predictor (separate row — slow, opt-in)
+    // AlphaGenome variant-effect predictor (separate row — slow, opt-in)
     const variantId = `${s.chr}_${s.pos}_${s.ref}_${s.alt}`;
     h += `<div class="tt-lit">`
-      + `<button class="ag1-btn" data-variant="${variantId}" data-rsid="${askKey}">🧬 AG1 variant effect (${variantId})</button>`
+      + `<button class="ag1-btn" data-variant="${variantId}" data-rsid="${askKey}">🧬 AlphaGenome variant effect (${variantId})</button>`
       + `</div>`;
     h += `</div>`;
     return h;
@@ -3193,7 +3193,7 @@
     document.addEventListener("mouseup", () => { drag = null; });
   }
 
-  // ---------- AG1 (AlphaGenome) variant-effect panel ----------
+  // ---------- AlphaGenome variant-effect panel ----------
   let _ag1Panel = null;
   let _ag1Polls = new Map();
   // Same-origin: nginx serves /opt/heartgrn/hub/ at the site root, so
@@ -3206,7 +3206,7 @@
     p.className = "ag1-panel";
     p.style.display = "none";
     p.innerHTML = `<div class="ag1-header">
-        <span>🧬 AG1 variant effect <span id="ag1-title" class="meta"></span></span>
+        <span>🧬 AlphaGenome variant effect <span id="ag1-title" class="meta"></span></span>
         <span class="ag1-actions">
           <button id="ag1-reset-pos" title="Reset position">⤢</button>
           <span class="chat-close" id="ag1-close" title="Close (Esc)">×</span>
@@ -3321,20 +3321,20 @@
       renderAg1Result(variantId, rsid, status);
       return;
     }
-    // Beta: no on-demand AG1 scoring. Show the list of representative variants
-    // that are pre-cached, and let the user click one to switch panels.
+    // Beta: no on-demand AlphaGenome scoring. Show the list of representative
+    // variants that are pre-cached, and let the user click one to switch panels.
     const variantLinks = AG1_BETA_VARIANTS.map((v) =>
       `<li><code class="ag1-variant-link" data-variant="${v}">${v}</code></li>`,
     ).join("");
     body.innerHTML = `
       <div class="meta">Variant <code>${variantId}</code> is not in the beta cache.</div>
       <div class="ag1-warn">
-        <b>Beta:</b> on-demand AG1 inference is disabled in this preview.
-        AG1 effect predictions are available only for these
+        <b>Beta:</b> on-demand AlphaGenome inference is disabled in this preview.
+        AlphaGenome effect predictions are available only for these
         ${AG1_BETA_VARIANTS.length} representative SNPs:
       </div>
       <ul class="ag1-variant-list">${variantLinks}</ul>
-      <div class="meta">Click a variant ID above to inspect its cached AG1 result.</div>
+      <div class="meta">Click a variant ID above to inspect its cached AlphaGenome result.</div>
     `;
     body.querySelectorAll(".ag1-variant-link").forEach((el) => {
       el.addEventListener("click", () => {
@@ -3344,7 +3344,7 @@
     });
   }
 
-  // Representative SNPs with pre-cached AG1 results in this beta preview.
+  // Representative SNPs with pre-cached AlphaGenome results in this beta preview.
   // Keep in sync with /opt/heartgrn/hub/ag1_cache/ on the server.
   const AG1_BETA_VARIANTS = [
     "1_56530519_T_C", "1_150558904_T_C", "1_201903136_C_T",
@@ -3383,7 +3383,7 @@
         } else if (s.status === "error") {
           clearInterval(t); clearInterval(uiTick); _ag1Polls.delete(variantId);
           if (_ag1Panel) {
-            $("ag1-body").innerHTML = `<div class="ag1-warn">AG1 error: ${s.error || "(no detail)"}</div>`;
+            $("ag1-body").innerHTML = `<div class="ag1-warn">AlphaGenome error: ${s.error || "(no detail)"}</div>`;
           }
         }
       } catch (_) { /* keep polling */ }

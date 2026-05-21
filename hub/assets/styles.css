@@ -494,7 +494,7 @@ button:active { transform: translateY(0.5px); }
   background: #1e293b; color: #fff; border-color: #1e293b;
 }
 
-/* AG1 floating panel — variant effect predictor */
+/* AlphaGenome floating panel — variant effect predictor */
 .ag1-panel {
   position: fixed; top: 60px; right: 60px; width: 480px;
   max-height: calc(100vh - 120px); overflow: auto;
