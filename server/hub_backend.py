@@ -396,7 +396,10 @@ def _call_gemini_sdk(prompt: str, *, api_key: str,
     if not api_key:
         raise AgentError("invalid Google API key (empty)")
 
-    model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    # Default: gemini-2.0-flash. Free tier gets 15 RPM / 1M TPM vs 2.5-flash's
+    # 10 RPM / 250k TPM, and we see far fewer 503s from 2.0. User can override
+    # via GEMINI_MODEL env var if they want 2.5-flash quality on a paid plan.
+    model = model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
     client = genai.Client(api_key=api_key)
     tools_arg = []
     if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
@@ -521,8 +524,10 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
         # Try requested model; on 503/UNAVAILABLE fall back to gemini-2.0-flash
         # (more stable backend) before giving up. Each attempt has its own
         # token budget; if the first emits any text we don't fall back.
-        candidates = [model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-                      "gemini-2.0-flash"]
+        # Default is gemini-2.0-flash (free tier 15 RPM / 1M TPM, fewer 503s).
+        # On overload, try 2.5-flash as the slower-but-higher-quality fallback.
+        candidates = [model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+                      "gemini-2.5-flash"]
         seen = set()
         last_err: Exception | None = None
         for mdl in candidates:
@@ -2416,8 +2421,19 @@ class LitHandler(BaseHTTPRequestHandler):
                     self.wfile.flush()
             except AgentError as e:
                 err_lower = str(e).lower()
-                code = "auth_failed" if ("auth" in err_lower or "invalid" in err_lower) else \
-                       "rate_limited" if ("rate" in err_lower or "limit" in err_lower) else "agent_failed"
+                # Distinguish provider 503/overload from real rate-limit so
+                # the UI can suggest "Google is busy, retry" vs "you hit your
+                # quota, wait or upgrade". 503 / unavailable / overloaded are
+                # provider-side capacity issues; 429 / rate / quota are user-
+                # side or per-key caps.
+                if "auth" in err_lower or "invalid" in err_lower:
+                    code = "auth_failed"
+                elif "unavailable" in err_lower or "overloaded" in err_lower or "503" in err_lower:
+                    code = "service_unavailable"
+                elif "rate" in err_lower or "limit" in err_lower or "quota" in err_lower or "429" in err_lower:
+                    code = "rate_limited"
+                else:
+                    code = "agent_failed"
                 sse = f"event: error\ndata: {json.dumps({'error': code, 'detail': str(e)})}\n\n"
                 try:
                     self.wfile.write(sse.encode("utf-8")); self.wfile.flush()

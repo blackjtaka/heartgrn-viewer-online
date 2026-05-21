@@ -2667,20 +2667,24 @@
       } else if (err.status === 429) {
         appendChatMessage("system", "⏳ Rate-limited. Wait a minute and try again.");
       } else if (err.errorPayload) {
-        if (err.errorPayload.error === "rate_limited") {
-          // Pick the wording based on whichever provider key is in
-          // localStorage right now — don't hardcode "Anthropic".
-          const kk = (localStorage.getItem("anthropic_api_key") || "");
-          const provider = kk.startsWith("sk-ant-") ? "Anthropic"
-                            : kk.startsWith("AIza") ? "Gemini"
-                            : "LLM";
+        const ec = err.errorPayload.error;
+        const kk = (localStorage.getItem("anthropic_api_key") || "");
+        const provider = kk.startsWith("sk-ant-") ? "Anthropic"
+                          : kk.startsWith("AIza") ? "Gemini"
+                          : "LLM";
+        if (ec === "rate_limited") {
           const hint = provider === "Anthropic"
             ? "Typically 30,000 input tokens/min on Tier 1. Wait ~60s, upgrade plan, or switch to a Gemini key."
             : provider === "Gemini"
-            ? "Gemini free tier is very tight (often 1 RPM / 10 RPM depending on model). Wait 60s or upgrade to a paid Google AI plan."
+            ? "Gemini free tier is tight (15 RPM / 1M TPM on 2.0-flash, 10 RPM / 250k TPM on 2.5-flash). Wait 60s or upgrade your Google AI plan."
             : "Wait 60s and retry.";
           appendChatMessage("system",
             `⏳ ${provider} key rate-limited. ${hint}`);
+        } else if (ec === "service_unavailable") {
+          // Distinct from rate-limit: the provider is overloaded, not the
+          // user's quota. No quota was consumed, retrying soon should work.
+          appendChatMessage("system",
+            `☁️ ${provider} service is temporarily overloaded (503). This is on the provider's side, not your quota — wait 30-60s and try again.`);
         } else {
           appendChatMessage("system",
             `Error: ${err.errorPayload.detail || err.errorPayload.error || "stream failed"}`);
