@@ -2668,9 +2668,19 @@
         appendChatMessage("system", "⏳ Rate-limited. Wait a minute and try again.");
       } else if (err.errorPayload) {
         if (err.errorPayload.error === "rate_limited") {
+          // Pick the wording based on whichever provider key is in
+          // localStorage right now — don't hardcode "Anthropic".
+          const kk = (localStorage.getItem("anthropic_api_key") || "");
+          const provider = kk.startsWith("sk-ant-") ? "Anthropic"
+                            : kk.startsWith("AIza") ? "Gemini"
+                            : "LLM";
+          const hint = provider === "Anthropic"
+            ? "Typically 30,000 input tokens/min on Tier 1. Wait ~60s, upgrade plan, or switch to a Gemini key."
+            : provider === "Gemini"
+            ? "Gemini free tier is very tight (often 1 RPM / 10 RPM depending on model). Wait 60s or upgrade to a paid Google AI plan."
+            : "Wait 60s and retry.";
           appendChatMessage("system",
-            `⏳ Rate-limited. Your Anthropic key hit its per-minute input-token cap (typically 30,000/min on Tier 1). `
-            + `Wait ~60s and retry, upgrade the Anthropic plan, or switch to a Gemini key in the 🔑 BYOK panel.`);
+            `⏳ ${provider} key rate-limited. ${hint}`);
         } else {
           appendChatMessage("system",
             `Error: ${err.errorPayload.detail || err.errorPayload.error || "stream failed"}`);
