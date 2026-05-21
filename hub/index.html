@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779360658">
+<link rel="stylesheet" href="assets/styles.css?v=1779361634">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -403,6 +403,8 @@
       <button class="help-tab active" data-tab="quickstart">Quickstart</button>
       <button class="help-tab" data-tab="concepts">Concepts</button>
       <button class="help-tab" data-tab="tasks">Tasks</button>
+      <button class="help-tab" data-tab="caveats">Caveats</button>
+      <button class="help-tab" data-tab="faq">FAQ</button>
     </div>
 
     <div class="help-body" data-pane="quickstart">
@@ -476,13 +478,80 @@
       </ul>
     </div>
 
+    <div class="help-body" data-pane="caveats" hidden>
+      <p class="help-warn-lead">CardioNav can mislead if these traps are
+        not understood:</p>
+      <ul class="help-tasks">
+        <li><b>"Verified" citation ≠ paper supports the claim.</b> The badge
+          confirms the PMID exists on PubMed and that the LLM linked it.
+          A topically-unrelated paper can still pass. Read the abstract
+          before quoting anything in a grant.</li>
+        <li><b>PIP is per fine-mapping run, not per locus.</b> A SNP at
+          PIP 0.8 in one credibleSet may be at PIP 0.1 in another study
+          for the same trait. The SNP card now shows the OT <code>study_id</code>
+          that produced the PIP — use it for round-trip traceability.</li>
+        <li><b>eGRN edges are predicted, not validated.</b> A "TF→peak→gene"
+          edge means the pipeline saw motif + chromatin + co-expression
+          consistency, not that a ChIP-seq or CRISPRi experiment confirmed
+          the interaction.</li>
+        <li><b>DE-z depends on the reference.</b> Switching the reference
+          cell-state changes which genes light up. A gene that looks
+          specific to atrial cardiomyocytes vs "all" may not look specific
+          vs "ventricular cardiomyocytes". Sanity-check with at least 2
+          references before claiming specificity.</li>
+        <li><b>AlphaGenome beta covers 15 variants only.</b> "Variant not
+          in beta cache" means we haven't scored it yet — NOT that
+          AlphaGenome predicts zero effect.</li>
+        <li><b>Cached refs ≠ user-curated knowledge.</b> The backend
+          silently caches every cited PMID by context for retrieval
+          speed; this is an internal store. Only the explicit 👍 vote +
+          📝 Summarize flow is human-curated.</li>
+      </ul>
+    </div>
+
+    <div class="help-body" data-pane="faq" hidden>
+      <dl class="help-dl">
+        <dt>Why is the chat so slow / why does it say I'm rate-limited?</dt>
+        <dd>Each chat call sends 15-30k input tokens (system prompt +
+          graph state + history). Gemini 2.0-flash free tier is 1M
+          tokens/min — heavy use can exhaust this in a handful of
+          rapid-fire questions. Wait 60 s and retry, or upgrade your
+          Google AI / Anthropic plan.</dd>
+
+        <dt>I see "service overloaded (503)" — did I burn my quota?</dt>
+        <dd>No. 503 is on Google's side (especially during peak hours);
+          no quota is consumed. Just retry in 30 s.</dd>
+
+        <dt>My gene isn't on the graph.</dt>
+        <dd>The seed ring shows the top-N by GWAS-z. If your gene didn't
+          make the cut for this (disease, cell-state) combo, raise the
+          top-N slider. If still absent, your gene was below the
+          upstream pipeline's union-seed threshold.</dd>
+
+        <dt>The SNP card shows multiple <code>study_id_candidates</code>.</dt>
+        <dd>This SNP appears in multiple Open Targets credibleSets that
+          all match the trait label. The payload can't pick one
+          unambiguously from the trait string alone — both / all are
+          listed for you to choose.</dd>
+
+        <dt>The agent ignored my view switch instruction.</dt>
+        <dd>The agent emits structured actions like
+          <code>set_disease</code> / <code>set_target_cs</code> that the
+          viewer applies automatically. If you only see prose, the LLM
+          hallucinated the format — retry with a more explicit phrasing:
+          "switch the view to disease=AF, target_cs=AtrialCardiomyocytesLeft".</dd>
+      </dl>
+    </div>
+
     <div class="help-foot">
-      Full guide: <code>docs/USER_GUIDE.md</code> in the repo · ESC closes
+      <a href="https://github.com/blackjtaka/heartgrn-viewer-online/blob/master/docs/USER_GUIDE.md"
+         target="_blank" rel="noopener">Open the full guide on GitHub →</a>
+      &nbsp;·&nbsp; ESC closes
     </div>
   </div>
 </div>
 
-<script src="assets/specificity.js?v=1779360658"></script>
-<script src="assets/viewer.js?v=1779360658"></script>
+<script src="assets/specificity.js?v=1779361634"></script>
+<script src="assets/viewer.js?v=1779361634"></script>
 </body>
 </html>

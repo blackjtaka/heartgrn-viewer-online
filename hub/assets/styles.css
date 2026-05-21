@@ -563,11 +563,22 @@ button:active { transform: translateY(0.5px); }
   padding-left: 0;
 }
 .help-tasks li { margin-bottom: 8px; }
+.help-warn-lead {
+  background: #fef3c7;
+  border-left: 3px solid #f59e0b;
+  padding: 6px 10px;
+  margin: 4px 0 10px;
+  border-radius: 0 4px 4px 0;
+  color: #92400e;
+  font-weight: 500;
+}
 .help-foot {
   border-top: 1px dashed #e2e8f0;
   margin-top: 14px; padding-top: 10px;
   font-size: 11.5px; color: #64748b;
 }
+.help-foot a { color: #1d4ed8; text-decoration: none; font-weight: 600; }
+.help-foot a:hover { text-decoration: underline; }
 
 /* AlphaGenome floating panel — variant effect predictor */
 .ag1-panel {
