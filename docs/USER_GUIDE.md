@@ -135,7 +135,30 @@ evidence (TF motif in an accessible peak that loops to a gene whose
 expression correlates with the TF's). It does NOT mean a ChIP-seq or
 CRISPRi experiment has confirmed it.
 
-### 3.2  Credible set and PIP — Posterior Inclusion Probability
+### 3.2  GWAS-z — disease-relevance score via SNP2CELL propagation
+
+The score that drives the seed-gene ring (and the TF specificity ranking)
+is **not** the raw GWAS p-value at a SNP. It comes from the **SNP2CELL
+propagation pipeline**:
+
+1. The relevant disease's GWAS summary statistics are fine-mapped into
+   credible sets (Open Targets v26.03).
+2. Each credible-set SNP is mapped to candidate genes via L2G + peak
+   overlap inside the cell-state's eGRN.
+3. The resulting per-gene seed weights are **diffused over the
+   regulatory network** (random-walk-with-restart on the eGRN graph) so
+   that a node connected to many GWAS-implicated neighbours accumulates
+   higher signal even if no direct SNP hits it.
+4. The final propagated value is z-scored across all genes in that
+   cell-state's network and exposed as `gwas_z` on the node tooltip.
+
+> **GWAS-z therefore reflects "how reachable is this gene from the disease's
+> GWAS signal through this cell-state's regulatory wiring", NOT a per-gene
+> p-value.** A gene with a high GWAS-z in atrial cardiomyocytes may have a
+> low GWAS-z in fibroblasts for the same disease — the rewiring of the
+> network changes which genes the signal flows to.
+
+### 3.3  Credible set and PIP — Posterior Inclusion Probability
 
 When a GWAS hit is fine-mapped, the result is a **credible set**: a small
 group of SNPs that together carry ~95% of the statistical signal at the
@@ -154,7 +177,7 @@ can trace which credibleSet the PIP came from.
 A locus with one credible-set SNP at PIP 0.9 is very different from a
 locus with twenty SNPs each at PIP 0.05.
 
-### 3.3  DE-z and the choice of reference cell state
+### 3.4  DE-z and the choice of reference cell state
 
 The colour you see on each seed gene is its **DE-z score** — a differential
 expression Z-score *relative to a reference cell state* you pick at the top.
@@ -171,7 +194,7 @@ reference depends on your biological question:
 - "What distinguishes diseased valve cells from healthy ones?" →
   reference = "healthy valve cells"
 
-### 3.4  AlphaGenome variant-effect score (beta)
+### 3.5  AlphaGenome variant-effect score (beta)
 
 The 🧬 floating panel shows, for select SNPs, a deep-learning prediction
 of how the variant perturbs regulatory activity (chromatin accessibility,
@@ -184,7 +207,7 @@ representative variants** have results. If your SNP of interest is not in
 the list, the panel will say so. Absence in the cache means "not yet
 scored", **not** "predicted to have no effect".
 
-### 3.5  Chat grounding and BYOK
+### 3.6  Chat grounding and BYOK
 
 "Grounding" means the prompt you send to the LLM is augmented with
 **verified PMIDs** the backend prefetches (and, optionally, PubMed abstract
@@ -527,8 +550,8 @@ A consolidated list of the biases and traps that can lead to wrong
 inferences:
 
 - **"Verified" citation ≠ supports the claim** — see [section 5](#5-chat-agent).
-- **PIP is per fine-mapping run, not per locus** — see [section 3.2](#32--credible-set-and-pip--posterior-inclusion-probability).
-- **AlphaGenome covers 15 variants only** — see [section 3.4](#34--alphagenome-variant-effect-score-beta).
+- **PIP is per fine-mapping run, not per locus** — see [section 3.3](#33--credible-set-and-pip--posterior-inclusion-probability).
+- **AlphaGenome covers 15 variants only** — see [section 3.5](#35--alphagenome-variant-effect-score-beta).
 - **Cached refs are NOT user-curated** — the backend silently accumulates
   agent-found PMIDs to improve future grounding; this is a performance
   store, not a vetted bibliography. Only the explicit 👍 vote + 📝

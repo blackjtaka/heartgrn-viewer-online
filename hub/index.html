@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779363073">
+<link rel="stylesheet" href="assets/styles.css?v=1779363167">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -432,6 +432,16 @@
           network (TF → peak → gene). Hypotheses, not experimentally
           confirmed interactions.</dd>
 
+        <dt>GWAS-z</dt>
+        <dd>The score colouring seed-gene and TF nodes.
+          Computed by <b>SNP2CELL network propagation</b> from the
+          disease-specific GWAS sumstats: SNP-level Z-scores are
+          mapped to genes via fine-mapping + L2G, then diffused
+          through the gene-regulatory network so that each node ends
+          up with an aggregated, propagation-smoothed disease-relevance
+          score. Higher = more strongly implicated by the GWAS signal
+          in this cell-state's regulatory neighbourhood.</dd>
+
         <dt>PIP</dt>
         <dd>Posterior Inclusion Probability — credible-set membership
           weight <i>within one fine-mapping run</i>.
@@ -551,7 +561,7 @@
   </div>
 </div>
 
-<script src="assets/specificity.js?v=1779363073"></script>
-<script src="assets/viewer.js?v=1779363073"></script>
+<script src="assets/specificity.js?v=1779363167"></script>
+<script src="assets/viewer.js?v=1779363167"></script>
 </body>
 </html>
