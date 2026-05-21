@@ -2617,7 +2617,9 @@
         body: JSON.stringify({
           message,
           graph_state: buildGraphState(),
-          history: S.chatHistory.slice(-10),
+          // Trimmed from 10 → 5 to halve the per-request input-token cost.
+          // Gemini free-tier TPM (1M/min on 2.0-flash) is the main limit.
+          history: S.chatHistory.slice(-5),
           // WebSearch is ON by default. When the deterministic NCBI prefetch
           // returns no VERIFIED_CITATIONS for a query, the agent is required
           // (by CHAT_SYSTEM_PROMPT) to actively search PubMed itself rather

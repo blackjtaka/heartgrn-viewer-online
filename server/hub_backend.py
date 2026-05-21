@@ -348,16 +348,17 @@ def _call_anthropic_sdk(prompt: str, *, api_key: str,
     if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
         # Tool-use round-trips re-send the full prompt + accumulated
         # tool_use/tool_result blocks each turn, which compounds against
-        # the org's per-minute input-token cap (30k/min on Anthropic
-        # Tier 1) AND lengthens the user's wait. Keep budgets minimal:
-        # ~3 searches + 5 fetches = enough for 2-3 strong citations
-        # with verification.
+        # the org's per-minute input-token cap (30k/min Anthropic Tier 1,
+        # 1M/min Gemini 2.0 free) AND lengthens the user's wait. Keep
+        # budgets minimal: 2 searches + 3 fetches = enough for 2 strong
+        # citations with verification. Tightened from 3/5 → 2/3 after
+        # free-tier users were exhausting TPM in a handful of chats.
         tools.append({"type": "web_search_20250305",
                       "name": "web_search",
-                      "max_uses": 3})
+                      "max_uses": 2})
         tools.append({"type": "web_fetch_20250910",
                       "name": "web_fetch",
-                      "max_uses": 5})
+                      "max_uses": 3})
 
     try:
         resp = client.messages.create(
@@ -463,8 +464,8 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
             # Same budget as non-streaming path; multi-turn tool use
             # compounds against per-minute input-token caps. See
             # _call_anthropic_sdk for the reasoning.
-            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 3})
-            tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 5})
+            tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 2})
+            tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 3})
         try:
             with client.messages.stream(
                 model=model or "claude-sonnet-4-6",
