@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/themes/light-border.css">
-<link rel="stylesheet" href="assets/styles.css?v=1779360245">
+<link rel="stylesheet" href="assets/styles.css?v=1779360508">
 <style>
   /* Password gate + BYOK modal styling */
   .gate-overlay {
@@ -45,12 +45,18 @@
   body.gate-cleared #app { visibility: visible; }
   body.gate-cleared .gate-overlay { display: none; }
 
-  /* Activate-Agent floating button shown in viewer */
-  #activate-agent-btn {
+  /* Floating top-right toolbar — User Guide + Activate Agent side by side */
+  #top-right-toolbar {
     position: fixed; top: 12px; right: 12px; z-index: 1500;
+    display: flex; gap: 8px;
+  }
+  #top-right-toolbar .top-right-btn {
     padding: 7px 13px; font: 12px -apple-system, BlinkMacSystemFont, sans-serif;
     background: #eaf3ff; color: #2a6fbf; border: 1px solid #b8d5f5;
     border-radius: 6px; cursor: pointer;
+  }
+  #top-right-toolbar .top-right-btn:hover {
+    background: #d9e8f9; border-color: #7eaee0;
   }
   #activate-agent-btn.ok { background: #e7f7ec; color: #1a7a3a; border-color: #b8e2c3; }
 </style>
@@ -93,7 +99,12 @@
   </div>
 </div>
 
-<button id="activate-agent-btn" style="display:none" onclick="window.openByokModal()">🔑 Activate Agent</button>
+<div id="top-right-toolbar">
+  <button id="help-btn" class="top-right-btn"
+          title="Open user guide (Quickstart + Concepts + Tasks)">📖 User Guide</button>
+  <button id="activate-agent-btn" class="top-right-btn"
+          style="display:none" onclick="window.openByokModal()">🔑 Activate Agent</button>
+</div>
 
 <script>
 // ===== Gate logic — runs before viewer.js loads the graph =====
@@ -196,8 +207,6 @@
   <div id="cy"></div>
   <div id="side">
     <h1 id="title-label">CardioNav</h1>
-    <button id="help-btn" class="user-guide-btn"
-            title="Open user guide (Quickstart + Concepts + Tasks)">📖 User Guide</button>
 
     <h2>Search graph</h2>
     <div class="control">
@@ -206,6 +215,8 @@
     </div>
 
     <h2>Selection</h2>
+    <div class="meta section-hint">Choose the disease and target cell-state the
+      network is built for. Switching either rebuilds the graph.</div>
     <div class="control">
       <label>Preset</label>
       <select id="preset-select"><option value="">— none —</option></select>
@@ -243,6 +254,9 @@
     </div>
 
     <h2>Specificity contrast</h2>
+    <div class="meta section-hint">Sets the reference cell-states the DE-z is
+      computed against. Default = "all others"; switch to a custom subset for
+      tissue-specific specificity.</div>
     <div class="control">
       <label>Compare target_cs vs</label>
       <select id="ref-mode">
@@ -268,6 +282,8 @@
     </div>
 
     <h2>Edge highlight</h2>
+    <div class="meta section-hint">Filter or recolour edges by which cell-types
+      support them — useful for isolating regulation specific to a lineage.</div>
     <div class="control">
       <label>Mode</label>
       <select id="edge-mode">
@@ -351,15 +367,6 @@
       <div class="legend-row"><span class="swatch" style="background:#ff6f00;height:3px;border-radius:0"></span> path edge</div>
     </div>
 
-    <h2>How to use</h2>
-    <div class="meta">
-      Pick disease + target cell_state. Default specificity contrast is "vs all
-      other cell_states". Switch to <i>Selected cell_states</i> to pick a
-      custom reference subset. <b>Click</b> a node to pin annotation (draggable
-      panel) and add it to the trail (yellow). <b>Hover</b> brings the closest
-      node to the front; press <b>Tab</b> to cycle stacked nodes. <b>Re-click</b>
-      removes the node's exclusive contribution. <b>Empty-space click</b> clears.
-    </div>
   </div>
 </div>
 
@@ -474,7 +481,7 @@
   </div>
 </div>
 
-<script src="assets/specificity.js?v=1779360245"></script>
-<script src="assets/viewer.js?v=1779360245"></script>
+<script src="assets/specificity.js?v=1779360508"></script>
+<script src="assets/viewer.js?v=1779360508"></script>
 </body>
 </html>
