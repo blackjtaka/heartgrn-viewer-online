@@ -349,7 +349,7 @@ def _call_anthropic_sdk(prompt: str, *, api_key: str,
         # Tool-use round-trips re-send the full prompt + accumulated
         # tool_use/tool_result blocks each turn, which compounds against
         # the org's per-minute input-token cap (30k/min Anthropic Tier 1,
-        # 1M/min Gemini 2.0 free) AND lengthens the user's wait. Keep
+        # 250k/min Gemini 2.5-flash free) AND lengthens the user's wait. Keep
         # budgets minimal: 2 searches + 3 fetches = enough for 2 strong
         # citations with verification. Tightened from 3/5 → 2/3 after
         # free-tier users were exhausting TPM in a handful of chats.
@@ -397,10 +397,11 @@ def _call_gemini_sdk(prompt: str, *, api_key: str,
     if not api_key:
         raise AgentError("invalid Google API key (empty)")
 
-    # Default: gemini-2.0-flash. Free tier gets 15 RPM / 1M TPM vs 2.5-flash's
-    # 10 RPM / 250k TPM, and we see far fewer 503s from 2.0. User can override
-    # via GEMINI_MODEL env var if they want 2.5-flash quality on a paid plan.
-    model = model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    # Default: gemini-2.5-flash. (2.0-flash was retired from the free tier
+    # ~2026-05; POSTs to it return 429 within ~150ms regardless of quota.)
+    # On free tier 2.5-flash gets 10 RPM / 250k TPM / ~250 RPD. Override via
+    # GEMINI_MODEL env var if you have access to other models on a paid plan.
+    model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
     tools_arg = []
     if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
@@ -522,13 +523,13 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                 tools_arg.append(types.Tool(url_context=types.UrlContext()))
             except AttributeError:
                 pass
-        # Try requested model; on 503/UNAVAILABLE fall back to gemini-2.0-flash
-        # (more stable backend) before giving up. Each attempt has its own
-        # token budget; if the first emits any text we don't fall back.
-        # Default is gemini-2.0-flash (free tier 15 RPM / 1M TPM, fewer 503s).
-        # On overload, try 2.5-flash as the slower-but-higher-quality fallback.
-        candidates = [model or os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
-                      "gemini-2.5-flash"]
+        # Try requested model; on 503/UNAVAILABLE fall back to gemini-2.5-flash-lite
+        # (separate quota bucket on free tier) before giving up. Each attempt
+        # has its own token budget; if the first emits any text we don't fall back.
+        # Default is gemini-2.5-flash (2.0-flash was retired from the free tier
+        # ~2026-05 — POSTs to it return 429 within ~150ms regardless of quota).
+        candidates = [model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+                      "gemini-2.5-flash-lite"]
         seen = set()
         last_err: Exception | None = None
         for mdl in candidates:
