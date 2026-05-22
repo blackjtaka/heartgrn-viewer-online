@@ -1243,7 +1243,11 @@ def verify_citations_in_response(obj: dict, grounding: list[dict], *,
     for c in cits:
         pmid = str(c.get("pmid") or "")
         if not pmid:
-            out.append({**c, "verified": False, "hallucinated": True}); continue
+            # No PMID = nothing to verify. Drop the row silently. A missing
+            # PMID is the agent declining to cite (fine for general
+            # gene-annotation answers); only a fake/non-existent PMID
+            # counts as hallucination (handled in the `else` branch below).
+            continue
         if pmid in grounding_pmids:
             g = grounding_pmids[pmid]
             row = {**g, "verified": True,
