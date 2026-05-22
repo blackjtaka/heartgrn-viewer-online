@@ -45,12 +45,13 @@
   body.gate-cleared #app { visibility: visible; }
   body.gate-cleared .gate-overlay { display: none; }
 
-  /* Floating top-right toolbar — User Guide + Activate Agent side by side.
-     Sits below the "CardioNav" h1 in the side panel so the labels don't
-     overlap the title at typical viewport widths. */
+  /* User Guide + Activate Agent toolbar — inline in the side panel under the
+     h1 so it never overlaps "CardioNav" regardless of viewport width.
+     (Was floating top:fixed before, which collided with the h1 at narrow
+     widths.) */
   #top-right-toolbar {
-    position: fixed; top: 44px; right: 12px; z-index: 1500;
     display: flex; gap: 8px;
+    margin: 4px 0 12px;
   }
   #top-right-toolbar .top-right-btn {
     padding: 7px 13px; font: 12px -apple-system, BlinkMacSystemFont, sans-serif;
@@ -99,13 +100,6 @@
       Provider is auto-detected from the key prefix (<code>sk-ant-</code> → Anthropic, <code>AIza</code> → Gemini).
     </div>
   </div>
-</div>
-
-<div id="top-right-toolbar">
-  <button id="help-btn" class="top-right-btn"
-          title="Open user guide (Quickstart + Concepts + Tasks)">User Guide</button>
-  <button id="activate-agent-btn" class="top-right-btn"
-          style="display:none" onclick="window.openByokModal()">Activate Agent</button>
 </div>
 
 <script>
@@ -209,6 +203,13 @@
   <div id="cy"></div>
   <div id="side">
     <h1 id="title-label">CardioNav</h1>
+
+    <div id="top-right-toolbar">
+      <button id="help-btn" class="top-right-btn"
+              title="Open user guide (Quickstart + Concepts + Tasks)">User Guide</button>
+      <button id="activate-agent-btn" class="top-right-btn"
+              style="display:none" onclick="window.openByokModal()">Activate Agent</button>
+    </div>
 
     <div class="ring-layout-card">
       <div class="ring-layout-title">Ring layout</div>
