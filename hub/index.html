@@ -45,9 +45,11 @@
   body.gate-cleared #app { visibility: visible; }
   body.gate-cleared .gate-overlay { display: none; }
 
-  /* Floating top-right toolbar — User Guide + Activate Agent side by side */
+  /* Floating top-right toolbar — User Guide + Activate Agent side by side.
+     Sits below the "CardioNav" h1 in the side panel so the labels don't
+     overlap the title at typical viewport widths. */
   #top-right-toolbar {
-    position: fixed; top: 12px; right: 12px; z-index: 1500;
+    position: fixed; top: 44px; right: 12px; z-index: 1500;
     display: flex; gap: 8px;
   }
   #top-right-toolbar .top-right-btn {
