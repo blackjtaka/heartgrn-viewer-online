@@ -403,8 +403,10 @@ def _call_gemini_sdk(prompt: str, *, api_key: str,
     # GEMINI_MODEL env var if you have access to other models on a paid plan.
     model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
+    wants_grounding = bool(
+        allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools))
     tools_arg = []
-    if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
+    if wants_grounding:
         tools_arg.append(types.Tool(google_search=types.GoogleSearch()))
         # url_context lets Gemini fetch a specific URL (e.g. the PubMed page
         # for a candidate PMID) to verify reachability + title before citing.
@@ -413,23 +415,41 @@ def _call_gemini_sdk(prompt: str, *, api_key: str,
         except AttributeError:
             pass  # older google-genai versions without UrlContext type
 
-    try:
-        resp = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=max_tokens,
-                tools=tools_arg or None,
-            ),
-        )
-    except Exception as e:
-        emsg = str(e).lower()
-        if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
-            raise AgentError(f"gemini auth failed (check your Google API key): {_scrub_key(e)}")
-        if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
-            raise AgentError(f"gemini quota/rate exceeded: {_scrub_key(e)}")
-        raise AgentError(f"gemini API error: {_scrub_key(e)}")
-    return (resp.text or "").strip()
+    # On 503 with grounding, retry the same model without tools. The
+    # tools-on bucket on free tier is far more loaded than tools-off.
+    # (See _stream_llm_sdk for the same pattern with full multi-model
+    # fallback; non-stream callers are internal helpers so we keep it
+    # to a single-model two-attempt retry here.)
+    attempts: list[bool] = [True, False] if wants_grounding else [False]
+    last_err: Exception | None = None
+    for use_tools in attempts:
+        attempt_tools = tools_arg if use_tools else None
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=max_tokens,
+                    tools=attempt_tools,
+                ),
+            )
+            return (resp.text or "").strip()
+        except Exception as e:
+            last_err = e
+            emsg = str(e).lower()
+            if "503" in emsg or "unavailable" in emsg or "overloaded" in emsg:
+                log.warning("gemini %s (tools=%s) 503 unavailable, "
+                            "trying next attempt", model, use_tools)
+                continue
+            if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
+                raise AgentError(f"gemini auth failed (check your Google API key): {_scrub_key(e)}")
+            if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
+                raise AgentError(f"gemini quota/rate exceeded: {_scrub_key(e)}")
+            raise AgentError(f"gemini API error: {_scrub_key(e)}")
+    raise AgentError(
+        f"gemini service unavailable (tried tools={attempts}). "
+        f"Either retry in a minute or switch to an Anthropic key. "
+        f"Last error: {last_err}")
 
 
 def _call_llm_sdk(prompt: str, *, api_key: str, **kwargs) -> str:
@@ -479,6 +499,7 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                 # the text deltas. Server-side tools (web_search,
                 # web_fetch) appear as content_block_start events with
                 # block.type == 'server_tool_use'.
+                anthropic_stop_reason: str | None = None
                 for event in stream:
                     et = getattr(event, "type", None)
                     if et == "content_block_start":
@@ -496,6 +517,20 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                             text = getattr(delta, "text", "") or ""
                             if text:
                                 yield ("text", text)
+                    elif et == "message_delta":
+                        # Captures stop_reason once Anthropic finalises the
+                        # message. Values to watch:
+                        #   max_tokens  → output truncated by budget
+                        #   refusal     → safety filter mid-response
+                        #   end_turn    → normal (but still mid-JSON means
+                        #                 the model decided to stop on its own)
+                        delta = getattr(event, "delta", None)
+                        sr = getattr(delta, "stop_reason", None)
+                        if sr:
+                            anthropic_stop_reason = sr
+                if anthropic_stop_reason and anthropic_stop_reason != "end_turn":
+                    log.warning("anthropic stream finished with stop_reason=%s",
+                                 anthropic_stop_reason)
         except RateLimitError as e:
             # Map the per-minute input-token cap (30k/min on Tier 1) to a
             # user-friendly hint that suggests waiting or switching key.
@@ -516,41 +551,58 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
         except ImportError:
             raise AgentError("google-genai SDK not installed")
         client = genai.Client(api_key=api_key)
+        wants_grounding = bool(
+            allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools))
         tools_arg = []
-        if allowed_tools and any(t in ("WebSearch", "web_search") for t in allowed_tools):
+        if wants_grounding:
             tools_arg.append(types.Tool(google_search=types.GoogleSearch()))
             try:
                 tools_arg.append(types.Tool(url_context=types.UrlContext()))
             except AttributeError:
                 pass
-        # Try requested model; on 503/UNAVAILABLE fall back to gemini-2.5-flash-lite
-        # (separate quota bucket on free tier) before giving up. Each attempt
-        # has its own token budget; if the first emits any text we don't fall back.
-        # Default is gemini-2.5-flash (2.0-flash was retired from the free tier
-        # ~2026-05 — POSTs to it return 429 within ~150ms regardless of quota).
-        candidates = [model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-                      "gemini-2.5-flash-lite"]
-        seen = set()
-        last_err: Exception | None = None
-        for mdl in candidates:
-            if mdl in seen:
+        # Try requested model with grounding; on 503/UNAVAILABLE first degrade
+        # to the same model WITHOUT grounding (the streamGenerateContent +
+        # google_search bucket on free tier 503s far more often than the
+        # tools-off bucket — observed 5/6 503-rate during peak hours), and
+        # only then fall back to gemini-2.5-flash-lite. The order is:
+        #   (primary, tools)   → (primary, no tools)   → (lite, tools) → (lite, no tools)
+        # If no grounding was ever requested, tools-off variants are the only ones.
+        # When the eventually-succeeding attempt is a tools-off retry of a
+        # tools-on request, a ("notice", {kind:"grounding_skipped", ...}) event
+        # is yielded so the UI can annotate that no fresh web search backed
+        # this response. Default model is gemini-2.5-flash (2.0-flash was
+        # retired from the free tier ~2026-05).
+        models = [model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+                  "gemini-2.5-flash-lite"]
+        attempts: list[tuple[str, bool]] = []
+        seen_models: set[str] = set()
+        for mdl in models:
+            if mdl in seen_models:
                 continue
-            seen.add(mdl)
+            seen_models.add(mdl)
+            if wants_grounding:
+                attempts.append((mdl, True))
+            attempts.append((mdl, False))
+        last_err: Exception | None = None
+        for mdl, use_tools in attempts:
+            attempt_tools = tools_arg if use_tools else None
             emitted_any = False
             grounding_announced = False
+            degraded_notice_sent = False
+            gemini_finish_reason: object | None = None
             try:
                 for chunk in client.models.generate_content_stream(
                     model=mdl,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         max_output_tokens=max_tokens,
-                        tools=tools_arg or None,
+                        tools=attempt_tools,
                     ),
                 ):
                     # Announce grounding tool use the first time we see
                     # web_search queries in the chunk metadata, so the UI
                     # can show "Searching PubMed for ...".
-                    if not grounding_announced:
+                    if use_tools and not grounding_announced:
                         try:
                             gm = (chunk.candidates[0].grounding_metadata
                                   if getattr(chunk, "candidates", None) else None)
@@ -563,9 +615,43 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                                 })
                         except (AttributeError, IndexError, TypeError):
                             pass
+                    # Capture finish_reason if present on this chunk (Gemini
+                    # surfaces it on the final chunk; values like MAX_TOKENS,
+                    # SAFETY, RECITATION are what we want to log so the user
+                    # knows why a stream cut short).
+                    try:
+                        fr = (chunk.candidates[0].finish_reason
+                              if getattr(chunk, "candidates", None) else None)
+                        if fr:
+                            gemini_finish_reason = fr
+                    except (AttributeError, IndexError, TypeError):
+                        pass
                     if chunk.text:
+                        if (wants_grounding and not use_tools
+                                and not degraded_notice_sent):
+                            # First text from a tools-off retry of a request
+                            # that originally asked for grounding — tell the
+                            # UI we're answering without a fresh web search.
+                            degraded_notice_sent = True
+                            yield ("notice", {
+                                "kind": "grounding_skipped",
+                                "reason": "gemini_503",
+                                "model": mdl,
+                                "detail": ("Gemini grounding service was "
+                                            "unavailable; answered without a "
+                                            "fresh PubMed/web search."),
+                            })
                         emitted_any = True
                         yield ("text", chunk.text)
+                # Stream completed cleanly. Log finish_reason if it was
+                # anything other than the normal STOP/end_turn so future
+                # truncated responses are debuggable.
+                fr_str = str(gemini_finish_reason or "").upper()
+                if fr_str and fr_str not in ("STOP", "FINISHREASON.STOP",
+                                              "FINISH_REASON_STOP"):
+                    log.warning("gemini %s (tools=%s) stream finished with "
+                                "finish_reason=%s", mdl, use_tools,
+                                gemini_finish_reason)
                 return                      # ok, stream finished
             except Exception as e:
                 last_err = e
@@ -577,9 +663,10 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                     if "quota" in emsg or "rate" in emsg or "exceeded" in emsg or "resource_exhausted" in emsg:
                         raise AgentError(f"gemini quota/rate exceeded: {_scrub_key(e)}")
                     raise AgentError(f"gemini stream interrupted: {_scrub_key(e)}")
-                # Pre-stream failure: decide whether to fall back to next model.
+                # Pre-stream failure: decide whether to try the next attempt.
                 if "503" in emsg or "unavailable" in emsg or "overloaded" in emsg:
-                    log.warning("gemini %s 503 unavailable, trying next model", mdl)
+                    log.warning("gemini %s (tools=%s) 503 unavailable, "
+                                "trying next attempt", mdl, use_tools)
                     continue
                 if "api key" in emsg or "permission" in emsg or "auth" in emsg or "invalid argument" in emsg:
                     raise AgentError(f"gemini auth failed (check your Google API key): {_scrub_key(e)}")
@@ -587,10 +674,13 @@ def _stream_llm_sdk(prompt: str, *, api_key: str,
                     raise AgentError(f"gemini quota/rate exceeded: {_scrub_key(e)}")
                 # Unknown error — don't loop, surface it.
                 raise AgentError(f"gemini API error: {_scrub_key(e)}")
-        # All candidates exhausted with 503.
-        raise AgentError(f"gemini service unavailable (tried {candidates}). "
-                          f"Either retry in a minute or switch to an Anthropic key. "
-                          f"Last error: {last_err}")
+        # All attempts exhausted with 503. NB: error string deliberately
+        # contains "unavailable" so the chat-stream classifier maps it to
+        # `service_unavailable` (frontend 503 banner) rather than agent_failed.
+        raise AgentError(
+            f"gemini service unavailable (tried {attempts}). "
+            f"Either retry in a minute or switch to an Anthropic key. "
+            f"Last error: {last_err}")
 
 
 # Backwards-compat alias for legacy call sites (will be removed after audit).
@@ -601,6 +691,40 @@ def _run_claude(prompt: str, *, api_key: str | None = None,
         raise AgentError("BYOK Anthropic API key required (none supplied)")
     return _call_anthropic_sdk(prompt, api_key=api_key,
                                 allowed_tools=allowed_tools, timeout=timeout)
+
+
+def _salvage_message_field(raw: str) -> str | None:
+    """Best-effort partial-JSON extractor mirroring the frontend's
+    `_extractStreamingMessageField`. Given a string that begins (somewhere)
+    with an unfinished JSON object containing `"message": "..."`, return
+    the contents of the message value up to the point the stream was cut.
+
+    Returns None if no `"message":` key is found at all.
+    """
+    if not raw:
+        return None
+    m = re.search(r'"message"\s*:\s*"', raw)
+    if not m:
+        return None
+    i = m.end()
+    out: list[str] = []
+    escape = False
+    while i < len(raw):
+        c = raw[i]
+        if escape:
+            # Decode the common JSON escapes; leave the rest as-is so the
+            # user sees something reasonable even on partial output.
+            out.append({"n": "\n", "t": "\t", "r": "\r",
+                         '"': '"', "\\": "\\", "/": "/"}.get(c, c))
+            escape = False
+        elif c == "\\":
+            escape = True
+        elif c == '"':
+            break  # closing quote reached → message field is complete
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out).strip() or None
 
 
 def _strip_json(text: str) -> dict | list | None:
@@ -1463,12 +1587,48 @@ def chat_with_agent_stream(message: str, graph_state: dict, history: list,
             # an SSE 'tool' event so the chat bubble can show an
             # informative pill while the model is mid-tool-call.
             yield ("tool", payload)
+        elif kind == "notice":
+            # Provider-side degradation (e.g. Gemini grounding 503 →
+            # answered without fresh web search). Relay verbatim so the
+            # UI can attach a footnote to the assistant response.
+            yield ("notice", payload)
     raw = "".join(raw_parts)
     obj = _strip_json(raw)
     if not isinstance(obj, dict):
-        yield ("done", {"message": "(Agent did not return parseable JSON.)",
-                         "actions": [], "citations": [],
-                         "grounding_count": len(grounding), "_raw": raw})
+        # Diagnose why parsing failed so the next occurrence is debuggable
+        # from journalctl without needing the user to paste the raw output.
+        if not raw.strip():
+            parse_reason = "empty_response"
+        elif "{" not in raw:
+            parse_reason = "no_json_brace"
+        elif isinstance(obj, list):
+            parse_reason = "json_was_array_not_object"
+        elif raw.count("{") > raw.count("}"):
+            parse_reason = "truncated_unbalanced_braces"
+        else:
+            parse_reason = "unparseable"
+        # Salvage: pull whatever the model managed to write into the
+        # `message` field before the stream cut. Stops the user from
+        # losing 100 words of generated text when the provider drops
+        # the connection mid-stream (Anthropic Tier 1 rate-limit silent
+        # close, Gemini upstream 503, etc.).
+        salvaged = _salvage_message_field(raw)
+        log.warning(
+            "chat-stream parse failure (%s): raw_len=%d salvaged=%d head=%r tail=%r",
+            parse_reason, len(raw), len(salvaged or ""), raw[:300], raw[-300:])
+        if salvaged:
+            yield ("done", {"message": salvaged,
+                             "actions": [], "citations": [],
+                             "grounding_count": len(grounding),
+                             "parse_reason": parse_reason,
+                             "_truncated": True,
+                             "_raw": raw})
+        else:
+            yield ("done", {"message": "(Agent did not return parseable JSON.)",
+                             "actions": [], "citations": [],
+                             "grounding_count": len(grounding),
+                             "parse_reason": parse_reason,
+                             "_raw": raw})
         return
     obj["citations"] = verify_citations_in_response(obj, grounding,
                                                      api_key=ncbi_api_key, email=ncbi_email)

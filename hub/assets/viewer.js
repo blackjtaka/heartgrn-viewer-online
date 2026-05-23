@@ -137,7 +137,7 @@
   // for each new partial message, and resolves with the final 'done' payload.
   // Aborts after 120s; throws {status, body?, errorPayload?, aborted?} on
   // HTTP / SSE error / timeout.
-  async function fetchChatStreaming(url, options, onUpdate, onTool) {
+  async function fetchChatStreaming(url, options, onUpdate, onTool, onNotice) {
     const ac = new AbortController();
     const timeoutId = setTimeout(() => ac.abort(), 120_000);
     let resp;
@@ -199,6 +199,14 @@
           try {
             const o = JSON.parse(dataStr);
             onTool && onTool(o);
+          } catch (_) {}
+        } else if (event === "notice") {
+          // Backend-side degradation note (e.g. Gemini grounding 503 →
+          // answered without a fresh PubMed search). Caller renders it
+          // alongside the assistant response.
+          try {
+            const o = JSON.parse(dataStr);
+            onNotice && onNotice(o);
           } catch (_) {}
         } else if (event === "done") {
           try { final = JSON.parse(dataStr); } catch (_) {}
@@ -2604,6 +2612,10 @@
     }
 
     let data;
+    // Collect any backend-side degradation notices (e.g. Gemini grounding
+    // 503 → answered without fresh web search) so we can attach a footnote
+    // to the assistant response once it lands.
+    const streamNotices = [];
     try {
       // Stream incoming text via SSE so the user sees the message growing
       // in real time. Replaces the spinner with a live preview as soon as
@@ -2658,6 +2670,10 @@
           ph.innerHTML = `<div class="tool-indicator">${label}</div>`;
           body.scrollTop = body.scrollHeight;
         }
+      }, (noticeEvent) => {
+        // Stash for rendering as a system footnote once the assistant
+        // message lands (see below, after appendChatMessage("agent", ...)).
+        if (noticeEvent) streamNotices.push(noticeEvent);
       });
     } catch (err) {
       stopThinking();
@@ -2708,8 +2724,36 @@
       console.warn("[chat-done] data received",
                    "msg.len=", (data.message || "").length,
                    "n_actions=", (data.actions || []).length,
-                   "actions=", data.actions);
-      const msg = data.message || (data._raw ? "(non-JSON response)" : "(empty)");
+                   "actions=", data.actions,
+                   "parse_reason=", data.parse_reason);
+      // If the backend flagged a parse failure WITHOUT salvaging any
+      // text, replace the generic "did not return parseable JSON" line
+      // with a specific cause + the last fragment of raw output so the
+      // user can act (retry / switch provider) without checking server
+      // logs. If the backend DID salvage a partial `message` field, use
+      // it as-is and we'll attach a "truncated" footnote after the
+      // assistant message lands (see streamNotices loop below).
+      let msg;
+      if (data.parse_reason && !data._truncated) {
+        const hintMap = {
+          empty_response:
+            "The model returned no text. This usually means the provider hit a rate-limit or content-safety filter mid-stream. Try again, or switch to the other provider in the BYOK panel.",
+          no_json_brace:
+            "The model replied in prose instead of structured JSON. Re-send the question — the model occasionally drops format when the prompt is short.",
+          json_was_array_not_object:
+            "The model returned a JSON array instead of an object. Re-send the question.",
+          truncated_unbalanced_braces:
+            "The response was cut off mid-JSON (likely a rate-limit, max-tokens hit, or upstream 503 mid-stream). Retry, or switch provider.",
+          unparseable:
+            "The JSON contained a syntax error. Retry — Gemini occasionally emits malformed JSON when grounding is degraded.",
+        };
+        const hint = hintMap[data.parse_reason]
+                      || "Retry, or switch to the other LLM provider.";
+        const tail = (data._raw || "").slice(-200);
+        msg = `⚠️ ${hint}\n\n_raw tail:_ \`${tail}\``;
+      } else {
+        msg = data.message || (data._raw ? "(non-JSON response)" : "(empty)");
+      }
       const explicitActions = data.actions || [];
 
       // Pass 1: detect explicit disease / cell_state change requests
@@ -2879,6 +2923,25 @@
       appendChatMessage("agent", msg, allActions, data.citations || [],
                         { grounding_count: data.grounding_count,
                           grounding_terms: data.grounding_terms });
+      // Render backend-side degradation notes (e.g. Gemini grounding 503)
+      // as a system footnote right after the assistant response, so the
+      // user knows when no fresh web search backed the answer.
+      for (const n of streamNotices) {
+        if (n && n.kind === "grounding_skipped") {
+          const model = n.model ? ` (${n.model})` : "";
+          const detail = n.detail
+            || "Gemini grounding service was unavailable; answered without a fresh PubMed/web search.";
+          appendChatMessage("system",
+            `ℹ️ ${detail} New literature search was skipped due to provider availability${model}.`);
+        }
+      }
+      // If the backend salvaged a partial message field from a cut-off
+      // stream, attach a truncated-response footnote so the user knows
+      // the answer is incomplete and a retry may yield more.
+      if (data._truncated) {
+        appendChatMessage("system",
+          "⚠️ The response was cut off mid-output (likely an Anthropic Tier-1 rate-limit silent close or upstream 503). Retry the question to get a complete answer, or switch provider in the BYOK panel.");
+      }
       S.chatHistory.push({ role: "agent", content: msg, actions: allActions });
       // `message` = original user prompt; tell the dispatcher what the user
       // is interested in so highlight_nodes anchors the camera there.
