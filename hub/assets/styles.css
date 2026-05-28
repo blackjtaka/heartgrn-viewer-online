@@ -59,10 +59,12 @@ html, body {
 }
 #side h1 img {
   display: block;
-  width: 100%;
-  max-width: 220px;
+  width: auto;
   height: auto;
+  max-width: 150px;
+  max-height: 110px;
   margin: 0;
+  object-fit: contain;
 }
 #side h2 {
   font-size: 11px; margin: 18px 0 6px; color: var(--muted);
