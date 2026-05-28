@@ -55,7 +55,7 @@ html, body {
 
 #side h1 {
   font-size: 14px; margin: 0 0 8px; font-weight: 600; letter-spacing: -0.01em;
-  display: flex; align-items: center; justify-content: flex-start;
+  display: flex; align-items: center; justify-content: center;
 }
 #side h1 img {
   display: block;
@@ -63,7 +63,7 @@ html, body {
   height: auto;
   max-width: 150px;
   max-height: 110px;
-  margin: 0;
+  margin: 0 auto;
   object-fit: contain;
 }
 #side h2 {
