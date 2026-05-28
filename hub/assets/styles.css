@@ -54,7 +54,15 @@ html, body {
 }
 
 #side h1 {
-  font-size: 14px; margin: 0 0 4px; font-weight: 600; letter-spacing: -0.01em;
+  font-size: 14px; margin: 0 0 8px; font-weight: 600; letter-spacing: -0.01em;
+  display: flex; align-items: center; justify-content: flex-start;
+}
+#side h1 img {
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+  margin: 0;
 }
 #side h2 {
   font-size: 11px; margin: 18px 0 6px; color: var(--muted);
