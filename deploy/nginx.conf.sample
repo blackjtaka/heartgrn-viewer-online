@@ -5,7 +5,7 @@
 #
 # This file is a frozen reference of the live config. Do NOT include it via
 # `include` — it is documentation. To install on a fresh host:
-#     1. Replace 178-105-162-190.nip.io with your real domain (3 places below).
+#     1. Replace viewer.example.org with your real domain (3 places below).
 #     2. sudo cp this file to /etc/nginx/sites-available/heartgrn
 #     3. sudo ln -s /etc/nginx/sites-available/heartgrn /etc/nginx/sites-enabled/
 #     4. Generate htpasswd:
@@ -26,7 +26,7 @@
 # ---------------------------------------------------------------------------
 
 server {
-    server_name 178-105-162-190.nip.io;
+    server_name viewer.example.org;
 
     root /opt/heartgrn/hub;
     index index.html;
@@ -139,21 +139,21 @@ server {
 
     listen [::]:443 ssl ipv6only=on; # managed by Certbot
     listen 443 ssl; # managed by Certbot
-    ssl_certificate /etc/letsencrypt/live/178-105-162-190.nip.io/fullchain.pem; # managed by Certbot
-    ssl_certificate_key /etc/letsencrypt/live/178-105-162-190.nip.io/privkey.pem; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/viewer.example.org/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/viewer.example.org/privkey.pem; # managed by Certbot
     include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
 
 }
 server {
-    if ($host = 178-105-162-190.nip.io) {
+    if ($host = viewer.example.org) {
         return 301 https://$host$request_uri;
     } # managed by Certbot
 
 
     listen 80;
     listen [::]:80;
-    server_name 178-105-162-190.nip.io;
+    server_name viewer.example.org;
     return 404; # managed by Certbot
 
 

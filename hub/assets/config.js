@@ -5,7 +5,7 @@
 // All values are public — do NOT put server-side secrets here.
 
 // Auto-detect the URL prefix so the viewer works both as
-//   - https://178-105-162-190.nip.io/             → API_BASE ""
+//   - https://viewer.example.org/                 → API_BASE ""
 //   - https://www.heartcellatlas.org/cardionav/   → API_BASE "/cardionav"
 //     (Sanger LB strips /cardionav/ before forwarding to our nginx,
 //      so client→Sanger fetches use the prefix; our nginx sees root paths.)

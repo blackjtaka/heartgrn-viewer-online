@@ -1,17 +1,16 @@
-# HeartGRN Viewer — online
+# CardioNav (HeartGRN Viewer) — online
 
-Public web deployment of the [HeartGRN viewer](https://github.com/blackjtaka/heartgrn-viewer), an interactive Cytoscape-based explorer for cardiac GWAS-eGRN propagation results from the snp2cell project.
+Web deployment of CardioNav, an interactive Cytoscape-based explorer for cardiac GWAS → eGRN propagation results (AF / CAD / AVS × heart cell states) from the snp2cell project. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for how to use it.
 
-## Live (work in progress)
+## Live
 
-- Frontend: TBD (Cloudflare Pages)
-- Backend: TBD (Fly.io)
+- Preview: <https://www.heartcellatlas.org/cardionav/> (access by invitation; HTTP Basic Auth)
 
 ## What's free, what needs an API key
 
 | Feature | Requires API key |
 |---|---|
-| Cytoscape graph explorer (nodes / edges / paths / panels) | **No** — fully open |
+| Cytoscape graph explorer (nodes / edges / paths / panels) | **No** |
 | Literature panel (PubMed E-utilities) | No (server cache) |
 | Variant ATAC/RNA tracks (AG1 cache) | No (precomputed) |
 | **Agent chat** (interactive LLM Q&A about the graph) | **Yes** — bring your own Anthropic API key |
@@ -20,36 +19,41 @@ Public web deployment of the [HeartGRN viewer](https://github.com/blackjtaka/hea
 
 The agent chat uses your own Anthropic API key, supplied at activation:
 
-1. Sign up at [console.anthropic.com](https://console.anthropic.com) (new users get $5 free credit ≈ 1,000 graph queries)
-2. Create an API key
-3. Click "Activate Agent" on the viewer and paste your key
-4. The key is stored in your browser's localStorage only — never sent to or stored on our servers
+1. Sign up at [console.anthropic.com](https://console.anthropic.com) and create an API key
+2. Click "Activate Agent" on the viewer and paste your key
+3. The key is kept in your browser's localStorage
 
-The backend only proxies the key to Anthropic on each `/chat` request and discards it after the response.
+On each `/chat` request the key is sent to the backend, which forwards it to the provider and discards it after the response; key-shaped strings are redacted from server error messages. A Google Gemini key (`AIza…`) is also accepted.
 
 ## Project structure
 
 ```
 heartgrn-viewer-online/
-├── hub/              ← static frontend → Cloudflare Pages
+├── hub/                  ← static frontend (served by nginx)
 │   ├── index.html
-│   ├── assets/
-│   │   ├── viewer.js
-│   │   └── styles.css
-│   └── payloads/     ← per (disease, cell_state) JSON
-├── server/           ← Python backend → Fly.io
-│   ├── hub_backend.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── docs/
-│   └── architecture.md
+│   ├── assets/           ← viewer.js, config.js, specificity.js, styles.css, logo
+│   ├── payloads/         ← per (disease, cell_state) JSON
+│   ├── manifest.json
+│   ├── lineage.json      ← cell-state hierarchy + cell counts
+│   └── snp_annotations.json
+├── server/               ← Python backend (hub_backend.py, requirements.txt, Dockerfile)
+├── deploy/
+│   └── nginx.conf.sample ← reverse-proxy template (replace viewer.example.org)
+├── docs/                 ← USER_GUIDE.md, architecture.md, deployment.md
 └── scripts/
-    └── sync_from_main.sh   ← rsync payloads from upstream snp2cell repo
+    └── add_study_id_to_payloads.py
 ```
+
+### Backend environment variables
+
+| Variable | Purpose |
+|---|---|
+| `ALLOWED_ORIGIN` / `CUSTOM_ORIGIN` | CORS origins of the deployed frontend |
+| `AG1_PYTHON`, `AG1_SCRIPT` | Python interpreter and `ag1.py` path for on-demand AlphaGenome scoring (only needed for variants not in the precomputed cache) |
 
 ## Related work
 
-This viewer accompanies the cardiac GWAS propagation analysis in our snp2cell project. See the [upstream development repo](https://github.com/blackjtaka/heartgrn-viewer) for the analysis pipeline and figure-generation scripts.
+This viewer accompanies the cardiac GWAS propagation analysis in our snp2cell project. The analysis pipeline and figure-generation scripts live in a separate repository that is not yet public.
 
 ## License
 

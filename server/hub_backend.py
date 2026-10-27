@@ -62,11 +62,11 @@ DEFAULT_PORT = 8766
 # ---- AG1 (AlphaGenome) integration --------------------------------------
 AG1_PYTHON = os.environ.get(
     "AG1_PYTHON",
-    "/Users/takahiro/miniforge3/envs/scanpy/bin/python",
+    sys.executable,
 )
 AG1_SCRIPT = Path(os.environ.get(
     "AG1_SCRIPT",
-    "/Users/takahiro/Desktop/project/hypersampling/ag1/pipeline_final/integration/ag1.py",
+    "ag1.py",
 ))
 AG1_VARIANT_RE = re.compile(r"^(?:chr)?([0-9XYM]+)_(\d+)_([ACGT]+)_([ACGT]+)$")
 # CORS allow-list. The deployed Cloudflare Pages URL is read from env
@@ -74,7 +74,7 @@ AG1_VARIANT_RE = re.compile(r"^(?:chr)?([0-9XYM]+)_(\d+)_([ACGT]+)_([ACGT]+)$")
 ALLOWED_ORIGINS = tuple(filter(None, [
     "http://localhost:8765", "http://127.0.0.1:8765",
     "http://localhost:8000", "http://127.0.0.1:8000",
-    os.environ.get("ALLOWED_ORIGIN"),                               # primary deploy URL (e.g. https://178-105-162-190.nip.io)
+    os.environ.get("ALLOWED_ORIGIN"),                               # primary deploy URL (e.g. https://viewer.example.org)
     os.environ.get("CF_PAGES_ORIGIN"),                              # legacy: Cloudflare Pages URL
     os.environ.get("CUSTOM_ORIGIN"),                                # additional custom origin
 ]))
