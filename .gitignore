@@ -6,9 +6,6 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Fly.io
-.fly/
-
 # Local cache
 hub/literature/
 hub/ag1_cache/

@@ -69,8 +69,8 @@ AG1_SCRIPT = Path(os.environ.get(
     "ag1.py",
 ))
 AG1_VARIANT_RE = re.compile(r"^(?:chr)?([0-9XYM]+)_(\d+)_([ACGT]+)_([ACGT]+)$")
-# CORS allow-list. The deployed Cloudflare Pages URL is read from env
-# (CF_PAGES_ORIGIN) so we don't bake a fixed domain into the image.
+# CORS allow-list. The deployed frontend origin is read from env
+# (ALLOWED_ORIGIN / CUSTOM_ORIGIN) so we do not bake a fixed domain into the code.
 ALLOWED_ORIGINS = tuple(filter(None, [
     "http://localhost:8765", "http://127.0.0.1:8765",
     "http://localhost:8000", "http://127.0.0.1:8000",
@@ -2303,7 +2303,7 @@ class LitHandler(BaseHTTPRequestHandler):
                     "POST /ag1/score/{variant}": "kick off AG1 score subprocess",
                     "POST /ag1/render/{variant}": "render AG1 figure",
                 },
-                "frontend": "https://heartgrn-viewer-online.pages.dev (Cloudflare Pages, password-gated staging)",
+                "frontend": "https://www.heartcellatlas.org/cardionav/ (preview, HTTP Basic Auth)",
                 "repo": "https://github.com/blackjtaka/heartgrn-viewer-online",
             })
             return

@@ -26,7 +26,7 @@ USER appuser
 
 EXPOSE 8766
 
-# Bind to 0.0.0.0 so Fly.io can reach the listener
+# Bind to 0.0.0.0 so the container port is reachable from the host
 CMD ["python", "-u", "server/hub_backend.py", \
      "--bind", "0.0.0.0", \
      "--port", "8766", \

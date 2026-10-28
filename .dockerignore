@@ -1,6 +1,5 @@
 .git/
 .gitignore
-.fly/
 .venv/
 __pycache__/
 *.pyc
@@ -10,7 +9,6 @@ docs/
 scripts/
 README.md
 LICENSE
-fly.toml
 hub/literature/
 hub/ag1_cache/
 hub/de_z/

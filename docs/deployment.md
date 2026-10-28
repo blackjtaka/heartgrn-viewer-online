@@ -1,103 +1,91 @@
 # Deployment guide
 
-Two-piece deployment: static frontend → **Cloudflare Pages**, Python backend → **Fly.io**.
+Single-host deployment: **nginx** serves the static frontend (`hub/`) and reverse-proxies API paths to the Python backend (`server/hub_backend.py`), which runs as a **systemd** service on `127.0.0.1:8766`. See [architecture.md](architecture.md) for the overall picture.
 
 ## Prereqs
 
-- GitHub repo: `blackjtaka/heartgrn-viewer-online` (this repo)
-- `flyctl` installed (`brew install flyctl`)
-- Cloudflare account (free)
+- A Linux host with nginx, certbot, and Python ≥ 3.11
+- A DNS name pointing at the host (examples below use `viewer.example.org`)
 
-## Backend → Fly.io
-
-### One-off setup
+## 1. Code and Python environment
 
 ```bash
-fly auth signup     # or `fly auth login`
-fly launch          # interactive; pick app name "heartgrn-api", region "lhr"
+sudo mkdir -p /opt/heartgrn && sudo chown "$USER" /opt/heartgrn
+git clone https://github.com/blackjtaka/heartgrn-viewer-online.git /opt/heartgrn
+cd /opt/heartgrn
+python3 -m venv .venv
+.venv/bin/pip install -r server/requirements.txt
 ```
 
-`fly launch` will detect the existing `fly.toml` and `server/Dockerfile`.
+nginx serves static files from `/opt/heartgrn/hub` (the `root` in `deploy/nginx.conf.sample`).
 
-### Deploy
+## 2. Backend → systemd
+
+The backend binds to `127.0.0.1` by default and serves `hub/` next to `server/` (override with `--hub-dir`). The unit file is not in this repo; a minimal example:
+
+```ini
+# /etc/systemd/system/heartgrn-backend.service
+[Unit]
+Description=CardioNav backend (hub_backend.py)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/heartgrn
+ExecStart=/opt/heartgrn/.venv/bin/python server/hub_backend.py --port 8766
+Environment=ALLOWED_ORIGIN=https://viewer.example.org
+Environment=CUSTOM_ORIGIN=https://www.heartcellatlas.org
+EnvironmentFile=-/etc/heartgrn/backend.env
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```bash
-fly deploy
+sudo systemctl daemon-reload
+sudo systemctl enable --now heartgrn-backend
+curl -s http://127.0.0.1:8766/healthz
+# → {"status": "ok", ...}
 ```
 
-Verify:
+### Environment variables
 
-```bash
-curl https://heartgrn-api.fly.dev/healthz
-# → {"status":"ok",...}
-```
+| Variable | Purpose |
+|---|---|
+| `ALLOWED_ORIGIN`, `CUSTOM_ORIGIN` | Origins allowed by the CORS / Origin check (localhost is always allowed) |
+| `CHAT_RATE_PER_MIN` | Backend per-IP limit on `/chat` (default 20) |
+| `NCBI_API_KEY`, `NCBI_EMAIL` | Optional; raise the NCBI E-utilities rate limit from 3/s to 10/s and identify the caller. Server-side only, unrelated to BYOK |
+| `GEMINI_MODEL` | Default Gemini model (default `gemini-2.5-flash`) |
+| `CREDIBLE_CITATIONS_FILE` | Credible-citation log (default `/var/lib/heartgrn/credible_citations.jsonl`) |
+| `CREDIBLE_IP_SALT` | Salt for hashing voter IPs — set a private value in production |
+| `AG1_PYTHON`, `AG1_SCRIPT` | Interpreter and `ag1.py` path for on-demand AlphaGenome scoring; only needed for variants not in the precomputed cache |
 
-### Setting CORS allow-list
+Put private values (`NCBI_API_KEY`, `CREDIBLE_IP_SALT`) in `/etc/heartgrn/backend.env`, not in the repo.
 
-After Cloudflare Pages gives you a public URL (e.g. `https://heartgrn.pages.dev`):
+## 3. nginx
 
-```bash
-fly secrets set CF_PAGES_ORIGIN=https://heartgrn.pages.dev
-# Optional once you add a custom domain:
-fly secrets set CUSTOM_ORIGIN=https://heartgrn.app
-fly deploy
-```
+Follow the header of [`deploy/nginx.conf.sample`](../deploy/nginx.conf.sample):
 
-The backend reads these env vars at startup to populate `ALLOWED_ORIGINS`.
+1. Replace `viewer.example.org` with your domain
+2. Copy to `/etc/nginx/sites-available/heartgrn` and symlink into `sites-enabled/`
+3. Create Basic Auth users: `sudo htpasswd -c /etc/nginx/heartgrn.htpasswd <user>`
+4. Add the chat rate-limit zone to `/etc/nginx/nginx.conf` (http block):
+   `limit_req_zone $binary_remote_addr zone=chat:10m rate=30r/m;`
+5. `sudo certbot --nginx -d <your-domain>`
+6. `sudo nginx -t && sudo systemctl reload nginx`
 
-### Setting NCBI E-utilities key (optional, raises rate limit)
+`/healthz` is exempt from Basic Auth for monitoring; everything else requires it.
 
-```bash
-fly secrets set NCBI_API_KEY=<your-NCBI-API-key>
-fly secrets set NCBI_EMAIL=your@email
-```
+## 4. Serving under a path prefix
 
-These are server-side (used for PubMed look-ups) and have nothing to do with BYOK Anthropic.
-
-## Frontend → Cloudflare Pages
-
-1. https://dash.cloudflare.com → Pages → Create → Connect to Git
-2. Select `blackjtaka/heartgrn-viewer-online`
-3. Build settings:
-   - Framework preset: None
-   - Build command: (empty)
-   - Build output directory: `hub`
-4. Save & deploy.
-
-Cloudflare auto-deploys on every push to `master`.
-
-URL: `https://heartgrn.pages.dev` (or whatever Pages assigns).
-
-### Wire frontend → backend
-
-The frontend reads the backend URL from a constant at the top of `hub/assets/viewer.js`:
-
-```js
-const API_BASE = "https://heartgrn-api.fly.dev";
-```
-
-Update this after Fly.io deploys. Push the commit; Cloudflare re-deploys automatically.
-
-## Custom domain (later)
-
-1. Buy a domain (e.g. Cloudflare Registrar, ~$10/year)
-2. Cloudflare dashboard → Pages → Custom domains → add `heartgrn.example.com`
-3. Cloudflare auto-creates the DNS record and SSL cert
-4. For the API: `fly certs add api.example.com` and add a CNAME record in Cloudflare DNS pointing to the Fly app
-5. Update `API_BASE` in `viewer.js`, also `fly secrets set CUSTOM_ORIGIN=https://heartgrn.example.com`
-
-No code change required besides the API_BASE constant.
+The public URL is `https://www.heartcellatlas.org/cardionav/`. The Sanger load balancer strips `/cardionav/` before forwarding, so nginx sees root paths. In the browser, `hub/assets/config.js` detects the prefix and sets `API_BASE` to `"/cardionav"`; no rebuild is needed. For local development against a separately running backend, set `API_BASE: "http://127.0.0.1:8766"` in `config.js`.
 
 ## Rolling updates
 
-- Code change (backend) → `fly deploy`
-- Code change (frontend) → `git push` (Cloudflare auto-deploys)
-- New payload data → `git push` (Cloudflare auto-deploys)
-- Anthropic SDK update → bump `server/requirements.txt`, `fly deploy`
-
-## Cost
-
-- Fly.io free tier: 3 × 256 MB VMs (we use one). Free unless you scale up.
-- Cloudflare Pages: free (unlimited bandwidth).
-- LLM: $0 to operator (BYOK).
-- Custom domain (optional): $10/year.
+```bash
+cd /opt/heartgrn && git pull
+# backend code or requirements changed:
+.venv/bin/pip install -r server/requirements.txt
+sudo systemctl restart heartgrn-backend
+# frontend / payload changes take effect on the next page load (static files)
+```

@@ -1,4 +1,4 @@
-# HeartGRN Viewer — online deployment architecture
+# CardioNav (HeartGRN Viewer) — online deployment architecture
 
 ## High-level diagram
 
@@ -8,64 +8,57 @@
 │  ├─ Cytoscape graph viewer (no key)                              │
 │  └─ Agent chat panel (X-API-Key from localStorage)               │
 └──────────────────────────────────────────────────────────────────┘
-        │                                          │
-        │ HTTPS static assets                      │ HTTPS POST /chat
-        ▼                                          ▼
-┌──────────────────────────┐         ┌──────────────────────────────┐
-│ Cloudflare Pages         │         │ Fly.io: hub_backend          │
-│ (free tier)              │         │ (Python 3.11, free VM)       │
-│                          │         │                              │
-│ Serves:                  │         │ Endpoints:                   │
-│  hub/index.html          │         │  /chat   ── Anthropic SDK    │
-│  hub/assets/*            │         │             tool-use loop    │
-│  hub/payloads/*.json     │         │  /literature/{snp,tf,gene}/* │
-│                          │         │             NCBI E-utilities │
-│ Domain (initial):        │         │  /ag1/score/{variant}        │
-│  *.pages.dev             │         │             cached results   │
-│                          │         │  /healthz                    │
-│ (custom domain later)    │         │                              │
-└──────────────────────────┘         └──────────────────────────────┘
-                                                  │
-                                                  │ HTTPS (with user's key)
-                                                  ▼
-                                     ┌──────────────────────────────┐
-                                     │ Anthropic API                │
-                                     │ (claude-sonnet-4-6)          │
-                                     └──────────────────────────────┘
+        │ HTTPS  https://www.heartcellatlas.org/cardionav/...
+        ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Sanger load balancer — strips the /cardionav/ prefix             │
+└──────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Single host                                                      │
+│                                                                  │
+│  nginx  (deploy/nginx.conf.sample)                               │
+│   ├─ TLS (Let's Encrypt / certbot)                               │
+│   ├─ HTTP Basic Auth on everything except /healthz               │
+│   ├─ /            → static files from /opt/heartgrn/hub          │
+│   └─ /chat, /chat/stream, /ag1/, /literature/, /gene/, /snp/,    │
+│      /citations/, /healthz → proxy to 127.0.0.1:8766             │
+│                                                                  │
+│  hub_backend.py  (systemd: heartgrn-backend.service, :8766)      │
+│   ├─ /chat, /chat/stream  ── LLM tool-use loop (BYOK)            │
+│   ├─ /literature/{snp,tf,gene}/*  ── NCBI E-utilities / EPMC     │
+│   ├─ /ag1/*  ── AlphaGenome scores (cache, optional on-demand)   │
+│   ├─ /gene/*, /snp/*  ── cross-payload lookup                    │
+│   └─ /citations/*  ── user-curated credible-PMID votes           │
+└──────────────────────────────────────────────────────────────────┘
+        │ HTTPS (with the user's key)
+        ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ Anthropic API (default claude-sonnet-4-6)                        │
+│   or Google Gemini API (default gemini-2.5-flash)                │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+The frontend calls the backend on the same origin. `hub/assets/config.js`
+sets `API_BASE` to `"/cardionav"` when the page was reached under that path,
+and to `""` otherwise, so the same files work behind the Sanger load balancer
+and when the host is reached directly.
 
 ## Key principles
 
-1. **BYOK only** — user provides their own Anthropic API key for `/chat`
-2. **Never persist user keys** — backend proxies the key for one request, discards it
-3. **Graph is open** — Cytoscape exploration requires no key
-4. **Citation grounding** — `/literature` uses NCBI E-utilities server-side to verify PMIDs the LLM mentions, preventing hallucinated citations
-5. **Stateless backend** — no DB, only filesystem cache (literature, AG1)
-
-## Cost model
-
-| Layer | Provider | Cost |
-|---|---|---|
-| Static frontend | Cloudflare Pages | $0 (free tier, unlimited bandwidth) |
-| Backend container | Fly.io | $0 (free tier, 3 × 256 MB VMs) |
-| LLM API | Anthropic | $0 to operator (BYOK = user pays) |
-| Domain | Cloudflare Registrar (optional) | $10/year |
-| PubMed | NCBI | $0 (E-utilities free) |
-| **Total** | | **$0–$10/year** |
+1. **BYOK only** — the user provides their own Anthropic (`sk-ant-…`) or Gemini (`AIza…`) key for `/chat`; the provider is chosen from the key prefix
+2. **Never persist user keys** — the backend forwards the key for one request and discards it; key-shaped strings are redacted from error messages
+3. **Graph is open** — Cytoscape exploration requires no key (but the whole site sits behind Basic Auth during the preview)
+4. **Citation grounding** — `/literature` queries NCBI E-utilities and Europe PMC server-side, so cited PMIDs are real records rather than LLM output
+5. **No database** — state lives in files: literature cache, AG1 cache, and the credible-citation log (`CREDIBLE_CITATIONS_FILE`, default `/var/lib/heartgrn/credible_citations.jsonl`)
 
 ## Security
 
-- `X-API-Key` header (not cookie) — minimizes XSS surface
-- CORS: allow only the Cloudflare Pages origin
-- Rate limit: per-IP 20 req/min on `/chat`
-- HTTPS enforced on both layers
-- `Content-Security-Policy` header to prevent third-party script injection
-- Anthropic key never logged, never written to disk, never echoed in responses
-
-## Migration to custom domain (future)
-
-1. Purchase domain at Cloudflare Registrar (~$10/year)
-2. Cloudflare Pages: Custom Domains → add `heartgrn.your-domain` (auto SSL)
-3. Fly.io: `fly certs add api.your-domain`
-4. Update frontend `API_BASE` constant
-5. Done — no other code change required
+- `X-API-Key` header (not cookie) for the user's LLM key
+- HTTP Basic Auth (nginx, `/etc/nginx/heartgrn.htpasswd`) on every path except `/healthz`
+- CORS / Origin check: only origins listed in `ALLOWED_ORIGIN` / `CUSTOM_ORIGIN` (plus localhost) are accepted on POST
+- Rate limits on `/chat`: nginx `limit_req` zone `chat` (recommended 30 req/min per IP, burst 10) and the backend's own per-IP limit (`CHAT_RATE_PER_MIN`, default 20)
+- Response headers set by nginx: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, HSTS
+- No `Content-Security-Policy` header is set at present
+- HTTP → HTTPS redirect (certbot-managed)
